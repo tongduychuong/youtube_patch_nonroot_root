@@ -718,14 +718,14 @@ jobs:
             --title \
             "YouTube Morphe - Main ${MAIN_VERSION} / Dev ${DEV_VERSION}" \
             --notes \
-"## YouTube Morphe
-
-### Main
-- Version: ${MAIN_VERSION}
-- Patches: Morphe main
-
-### Dev
-- Version: ${DEV_VERSION}
-- Patches: Morphe dev / prerelease
-
-Generated automatically by GitHub Actions at 23:00 Vietnam time."
+                "## YouTube Morphe
+                
+                ### Main
+                - Version: ${MAIN_VERSION}
+                - Patches: Morphe main
+                
+                ### Dev
+                - Version: ${DEV_VERSION}
+                - Patches: Morphe dev / prerelease
+                
+                Generated automatically by GitHub Actions at 23:00 Vietnam time."
