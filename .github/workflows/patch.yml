@@ -9,101 +9,210 @@ permissions:
   contents: write
 
 jobs:
+
   main:
     name: Morphe Stable
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
+      - name: Check Java
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -version
+          javac -version
+
       - name: Read version
         shell: bash
         run: |
-          set -e
-          VERSION="$(tr -d '\r\n' < version.txt | xargs)"
+          set -euxo pipefail
 
-          if [ -z "$VERSION" ]; then
-            echo "ERROR: version.txt is empty"
+          if [ ! -f "version.txt" ]; then
+            echo "ERROR: Không tìm thấy version.txt"
             exit 1
           fi
 
+          VERSION="$(tr -d '\r\n' < version.txt | xargs)"
+
+          echo "VERSION=$VERSION"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "MAIN VERSION: $VERSION"
+
+      - name: Check download script
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "======================================"
+          echo "CHECK FILES"
+          echo "======================================"
+
+          pwd
+          ls -la
+
+          if [ ! -f "scripts/download_youtube.sh" ]; then
+            echo "ERROR: Không tìm thấy scripts/download_youtube.sh"
+            echo "Các file trong scripts:"
+            ls -la scripts 2>/dev/null || true
+            exit 1
+          fi
+
+          file scripts/download_youtube.sh
+
+          sed -i 's/\r$//' scripts/download_youtube.sh
+          chmod +x scripts/download_youtube.sh
 
       - name: Download YouTube
         shell: bash
         run: |
-          set -e
-          test -f scripts/download_youtube.sh
-          chmod +x scripts/download_youtube.sh
+          set -euxo pipefail
+
+          echo "======================================"
+          echo "DOWNLOAD YOUTUBE"
+          echo "VERSION: $VERSION"
+          echo "======================================"
+
           ./scripts/download_youtube.sh "$VERSION"
+
+      - name: Show downloaded files
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "======================================"
+          echo "DOWNLOADED FILES"
+          echo "======================================"
+
+          find . \
+            -type f \
+            \( \
+              -name "*.apk" \
+              -o -name "*.apkm" \
+              -o -name "*.xapk" \
+              -o -name "*.apks" \
+            \) \
+            -printf '%p %s bytes\n'
 
       - name: Find YouTube
         shell: bash
         run: |
-          set -e
+          set -euxo pipefail
 
-          INPUT="$(find . -maxdepth 2 -type f \( \
-            -name "*.apk" -o \
-            -name "*.apkm" -o \
-            -name "*.xapk" -o \
-            -name "*.apks" \
-          \) | head -n 1)"
+          INPUT="$(
+            find . \
+              -maxdepth 3 \
+              -type f \
+              \( \
+                -name "*.apk" \
+                -o -name "*.apkm" \
+                -o -name "*.xapk" \
+                -o -name "*.apks" \
+              \) |
+            head -n 1
+          )"
 
           if [ -z "$INPUT" ]; then
-            echo "ERROR: YouTube APK/BUNDLE not found"
+            echo "ERROR: Không tìm thấy YouTube APK/BUNDLE"
             exit 1
           fi
 
+          echo "INPUT=$INPUT"
           echo "INPUT=$INPUT" >> "$GITHUB_ENV"
-          echo "Selected: $INPUT"
 
-      - name: Download Morphe
+      - name: Download Morphe CLI
         shell: bash
         run: |
-          set -e
+          set -euxo pipefail
 
           API="https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
 
-          URL="$(curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "User-Agent: GitHubActions" \
-            "$API" \
-            | grep -o 'https://[^"]*morphe-desktop-[^"]*-all\.jar' \
-            | head -n 1)"
+          echo "Getting Morphe release..."
+
+          RESPONSE="$(
+            curl -fsSL \
+              --retry 3 \
+              --retry-delay 2 \
+              -H "Accept: application/vnd.github+json" \
+              -H "User-Agent: GitHubActions" \
+              "$API"
+          )"
+
+          echo "$RESPONSE" > morphe-release.json
+
+          URL="$(
+            grep -o \
+              'https://[^"]*morphe-desktop-[^"]*-all\.jar' \
+              morphe-release.json |
+            head -n 1
+          )"
 
           if [ -z "$URL" ]; then
-            echo "ERROR: Morphe CLI not found"
+            echo "ERROR: Không tìm thấy Morphe CLI JAR"
+            echo "Release response:"
+            head -c 2000 morphe-release.json
             exit 1
           fi
 
+          echo "Morphe URL:"
+          echo "$URL"
+
           curl -fL \
+            --retry 3 \
+            --retry-delay 2 \
             -H "User-Agent: GitHubActions" \
             "$URL" \
             -o morphe-cli.jar
 
-          test -s morphe-cli.jar
+          ls -lh morphe-cli.jar
+
+      - name: Check Morphe CLI
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          java -jar morphe-cli.jar --help
 
       - name: Patch Stable
         shell: bash
         run: |
-          set -e
+          set -euxo pipefail
 
-          java -jar morphe-cli.jar patch \
+          echo "======================================"
+          echo "PATCH STABLE"
+          echo "VERSION: $VERSION"
+          echo "INPUT: $INPUT"
+          echo "CUSTOM BRANDING: DISABLED"
+          echo "======================================"
+
+          java -jar morphe-cli.jar \
+            patch \
             --patches \
             https://github.com/MorpheApp/morphe-patches \
             --disable "Custom branding" \
             -o "youtube-morphe-${VERSION}.apk" \
             "$INPUT"
 
-          test -f "youtube-morphe-${VERSION}.apk"
+      - name: Check Stable APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          if [ ! -f "youtube-morphe-${VERSION}.apk" ]; then
+            echo "ERROR: Morphe không tạo APK"
+            find . -type f -name "*.apk" -printf '%p %s bytes\n'
+            exit 1
+          fi
+
+          ls -lh "youtube-morphe-${VERSION}.apk"
 
       - name: Upload Stable
         uses: actions/upload-artifact@v4
@@ -118,89 +227,161 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Java
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
+      - name: Check Java
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -version
+
       - name: Read dev version
         shell: bash
         run: |
-          set -e
-          VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
+          set -euxo pipefail
 
-          if [ -z "$VERSION" ]; then
-            echo "ERROR: version_dev.txt is empty"
+          if [ ! -f "version_dev.txt" ]; then
+            echo "ERROR: Không tìm thấy version_dev.txt"
             exit 1
           fi
 
+          VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
+
+          echo "DEV VERSION=$VERSION"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "DEV VERSION: $VERSION"
+
+      - name: Check download script
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          if [ ! -f "scripts/download_youtube.sh" ]; then
+            echo "ERROR: Không tìm thấy scripts/download_youtube.sh"
+            ls -la scripts 2>/dev/null || true
+            exit 1
+          fi
+
+          sed -i 's/\r$//' scripts/download_youtube.sh
+          chmod +x scripts/download_youtube.sh
 
       - name: Download YouTube
         shell: bash
         run: |
-          set -e
-          test -f scripts/download_youtube.sh
-          chmod +x scripts/download_youtube.sh
+          set -euxo pipefail
+
+          echo "======================================"
+          echo "DOWNLOAD YOUTUBE DEV"
+          echo "VERSION: $VERSION"
+          echo "======================================"
+
           ./scripts/download_youtube.sh "$VERSION"
+
+      - name: Show downloaded files
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          find . \
+            -type f \
+            \( \
+              -name "*.apk" \
+              -o -name "*.apkm" \
+              -o -name "*.xapk" \
+              -o -name "*.apks" \
+            \) \
+            -printf '%p %s bytes\n'
 
       - name: Find YouTube
         shell: bash
         run: |
-          set -e
+          set -euxo pipefail
 
-          INPUT="$(find . -maxdepth 2 -type f \( \
-            -name "*.apk" -o \
-            -name "*.apkm" -o \
-            -name "*.xapk" -o \
-            -name "*.apks" \
-          \) | head -n 1)"
+          INPUT="$(
+            find . \
+              -maxdepth 3 \
+              -type f \
+              \( \
+                -name "*.apk" \
+                -o -name "*.apkm" \
+                -o -name "*.xapk" \
+                -o -name "*.apks" \
+              \) |
+            head -n 1
+          )"
 
           if [ -z "$INPUT" ]; then
-            echo "ERROR: YouTube APK/BUNDLE not found"
+            echo "ERROR: Không tìm thấy YouTube APK/BUNDLE"
             exit 1
           fi
 
+          echo "INPUT=$INPUT"
           echo "INPUT=$INPUT" >> "$GITHUB_ENV"
-          echo "Selected: $INPUT"
 
-      - name: Download Morphe
+      - name: Download Morphe CLI
         shell: bash
         run: |
-          set -e
+          set -euxo pipefail
 
           API="https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
 
-          URL="$(curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "User-Agent: GitHubActions" \
-            "$API" \
-            | grep -o 'https://[^"]*morphe-desktop-[^"]*-all\.jar' \
-            | head -n 1)"
+          RESPONSE="$(
+            curl -fsSL \
+              --retry 3 \
+              --retry-delay 2 \
+              -H "Accept: application/vnd.github+json" \
+              -H "User-Agent: GitHubActions" \
+              "$API"
+          )"
+
+          URL="$(
+            echo "$RESPONSE" |
+            grep -o \
+              'https://[^"]*morphe-desktop-[^"]*-all\.jar' |
+            head -n 1
+          )"
 
           if [ -z "$URL" ]; then
-            echo "ERROR: Morphe CLI not found"
+            echo "ERROR: Không tìm thấy Morphe CLI"
             exit 1
           fi
 
           curl -fL \
+            --retry 3 \
+            --retry-delay 2 \
             -H "User-Agent: GitHubActions" \
             "$URL" \
             -o morphe-cli.jar
 
-          test -s morphe-cli.jar
+          ls -lh morphe-cli.jar
+
+      - name: Check Morphe CLI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          java -jar morphe-cli.jar --help
 
       - name: Patch Dev
         shell: bash
         run: |
-          set -e
+          set -euxo pipefail
 
-          java -jar morphe-cli.jar patch \
+          echo "======================================"
+          echo "PATCH MORPHE DEV"
+          echo "VERSION: $VERSION"
+          echo "INPUT: $INPUT"
+          echo "CUSTOM BRANDING: DISABLED"
+          echo "======================================"
+
+          java -jar morphe-cli.jar \
+            patch \
             --patches \
             https://github.com/MorpheApp/morphe-patches \
             --prerelease \
@@ -208,7 +389,18 @@ jobs:
             -o "youtube-morphe-dev-${VERSION}.apk" \
             "$INPUT"
 
-          test -f "youtube-morphe-dev-${VERSION}.apk"
+      - name: Check Dev APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          if [ ! -f "youtube-morphe-dev-${VERSION}.apk" ]; then
+            echo "ERROR: Morphe Dev không tạo APK"
+            find . -type f -name "*.apk" -printf '%p %s bytes\n'
+            exit 1
+          fi
+
+          ls -lh "youtube-morphe-dev-${VERSION}.apk"
 
       - name: Upload Dev
         uses: actions/upload-artifact@v4
@@ -226,6 +418,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -241,30 +434,53 @@ jobs:
           name: youtube-morphe-dev
           path: release
 
+      - name: List release files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          find release -maxdepth 1 -type f -printf '%f %s bytes\n'
+
       - name: Get versions
         shell: bash
         run: |
-          set -e
+          set -euxo pipefail
 
-          MAIN_APK="$(find release -maxdepth 1 \
-            -name 'youtube-morphe-*.apk' \
-            ! -name 'youtube-morphe-dev-*' \
-            | head -n 1)"
+          MAIN_APK="$(
+            find release \
+              -maxdepth 1 \
+              -name 'youtube-morphe-*.apk' \
+              ! -name 'youtube-morphe-dev-*' |
+            head -n 1
+          )"
 
-          DEV_APK="$(find release -maxdepth 1 \
-            -name 'youtube-morphe-dev-*.apk' \
-            | head -n 1)"
+          DEV_APK="$(
+            find release \
+              -maxdepth 1 \
+              -name 'youtube-morphe-dev-*.apk' |
+            head -n 1
+          )"
 
-          test -n "$MAIN_APK"
-          test -n "$DEV_APK"
+          if [ -z "$MAIN_APK" ]; then
+            echo "ERROR: Stable APK missing"
+            exit 1
+          fi
 
-          MAIN_VERSION="$(basename "$MAIN_APK" \
-            | sed 's/^youtube-morphe-//' \
-            | sed 's/\.apk$//')"
+          if [ -z "$DEV_APK" ]; then
+            echo "ERROR: Dev APK missing"
+            exit 1
+          fi
 
-          DEV_VERSION="$(basename "$DEV_APK" \
-            | sed 's/^youtube-morphe-dev-//' \
-            | sed 's/\.apk$//')"
+          MAIN_VERSION="$(
+            basename "$MAIN_APK" |
+            sed 's/^youtube-morphe-//' |
+            sed 's/\.apk$//'
+          )"
+
+          DEV_VERSION="$(
+            basename "$DEV_APK" |
+            sed 's/^youtube-morphe-dev-//' |
+            sed 's/\.apk$//'
+          )"
 
           echo "MAIN_VERSION=$MAIN_VERSION" >> "$GITHUB_ENV"
           echo "DEV_VERSION=$DEV_VERSION" >> "$GITHUB_ENV"
@@ -274,7 +490,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -e
+          set -euxo pipefail
 
           TAG="youtube-morphe"
 
@@ -285,27 +501,24 @@ jobs:
               --title "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
               --notes "YouTube Morphe
 
-          Stable: ${MAIN_VERSION}
-          Dev: ${DEV_VERSION}
-          
-          Custom branding: Disabled"
+            Stable: ${MAIN_VERSION}
+            Dev: ${DEV_VERSION}
+            
+            Custom branding: Disabled"
           fi
 
           gh release edit "$TAG" \
             --title "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
             --notes "YouTube Morphe
 
-          Stable: ${MAIN_VERSION}
-          Dev: ${DEV_VERSION}
-          
-          Custom branding: Disabled"
+            Stable: ${MAIN_VERSION}
+            Dev: ${DEV_VERSION}
+            
+            Custom branding: Disabled"
 
-          gh release upload "$TAG" \
+          gh release upload \
+            "$TAG" \
             release/*.apk \
             --clobber
-
-          echo "======================================"
-          echo "RELEASE SUCCESS"
-          echo "======================================"
 
           gh release view "$TAG"
