@@ -39,7 +39,7 @@ jobs:
       # JAVA 21
       # ==================================================
 
-      - name: Setup Java
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -54,11 +54,12 @@ jobs:
         shell: bash
         run: |
           set -e
+
           java -version
 
 
       # ==================================================
-      # READ MAIN VERSION
+      # READ VERSION
       # ==================================================
 
       - name: Read main version
@@ -86,7 +87,7 @@ jobs:
 
 
       # ==================================================
-      # DOWNLOAD YOUTUBE FROM APKMIRROR
+      # DOWNLOAD YOUTUBE APK
       # ==================================================
 
       - name: Download YouTube from APKMirror
@@ -118,11 +119,12 @@ jobs:
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: Không tìm thấy:"
+            echo "ERROR: Không tìm thấy APK:"
             echo "$APK"
             exit 1
           fi
 
+          echo "YouTube APK:"
           ls -lh "$APK"
 
 
@@ -177,35 +179,16 @@ jobs:
 
           java \
             -jar morphe-cli.jar \
-            --help
+            --version
 
 
       # ==================================================
-      # CLONE MORPHE PATCHES MAIN
+      # PATCH MAIN
+      #
+      # Morphe tự tải stable .mpp
       # ==================================================
 
-      - name: Clone Morphe patches main
-        shell: bash
-        run: |
-          set -e
-
-          rm -rf morphe-patches
-
-          git clone \
-            --depth 1 \
-            --branch main \
-            https://github.com/MorpheApp/morphe-patches.git \
-            morphe-patches
-
-          echo "Morphe patches:"
-          ls -la morphe-patches
-
-
-      # ==================================================
-      # PATCH YOUTUBE
-      # ==================================================
-
-      - name: Patch YouTube
+      - name: Patch YouTube - MAIN
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
@@ -215,15 +198,18 @@ jobs:
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
           echo "======================================"
-          echo "PATCH YOUTUBE"
+          echo "MORPHE PATCH MAIN"
           echo "VERSION: $VERSION"
+          echo "PATCH SOURCE:"
+          echo "https://github.com/MorpheApp/morphe-patches"
           echo "======================================"
 
           java \
             -jar morphe-cli.jar \
             patch \
-            "$APK" \
-            --patches morphe-patches
+            --patches \
+            https://github.com/MorpheApp/morphe-patches \
+            "$APK"
 
 
       # ==================================================
@@ -235,7 +221,9 @@ jobs:
         run: |
           set -e
 
-          echo "APK files:"
+          echo "======================================"
+          echo "APK FILES"
+          echo "======================================"
 
           find . \
             -type f \
@@ -276,6 +264,7 @@ jobs:
             "$SOURCE" \
             "$OUTPUT"
 
+          echo "Patched APK:"
           ls -lh "$OUTPUT"
 
 
@@ -300,10 +289,10 @@ jobs:
 
 
       # ==================================================
-      # CREATE MAIN RELEASE
+      # CREATE RELEASE
       # ==================================================
 
-      - name: Create main release
+      - name: Create MAIN Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -317,9 +306,8 @@ jobs:
 
           SHA="${APK}.sha256"
 
-
           echo "======================================"
-          echo "CREATE RELEASE"
+          echo "CREATE MAIN RELEASE"
           echo "TAG: $TAG"
           echo "======================================"
 
@@ -339,8 +327,10 @@ jobs:
             "$TAG" \
             "$APK" \
             "$SHA" \
-            --title "YouTube Morphe ${VERSION}" \
-            --notes "YouTube ${VERSION} patched with MorpheApp patches main."
+            --title \
+            "YouTube Morphe ${VERSION}" \
+            --notes \
+            "YouTube ${VERSION} patched with MorpheApp patches MAIN."
 
 
   # ==================================================
@@ -367,7 +357,7 @@ jobs:
       # JAVA 21
       # ==================================================
 
-      - name: Setup Java
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -382,6 +372,7 @@ jobs:
         shell: bash
         run: |
           set -e
+
           java -version
 
 
@@ -414,7 +405,7 @@ jobs:
 
 
       # ==================================================
-      # DOWNLOAD YOUTUBE FROM APKMIRROR
+      # DOWNLOAD YOUTUBE APK
       # ==================================================
 
       - name: Download YouTube from APKMirror
@@ -446,11 +437,12 @@ jobs:
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: Không tìm thấy:"
+            echo "ERROR: Không tìm thấy APK:"
             echo "$APK"
             exit 1
           fi
 
+          echo "YouTube APK:"
           ls -lh "$APK"
 
 
@@ -505,35 +497,16 @@ jobs:
 
           java \
             -jar morphe-cli.jar \
-            --help
+            --version
 
 
       # ==================================================
-      # CLONE MORPHE PATCHES DEV
+      # PATCH DEV
+      #
+      # --prerelease = DEV
       # ==================================================
 
-      - name: Clone Morphe patches dev
-        shell: bash
-        run: |
-          set -e
-
-          rm -rf morphe-patches
-
-          git clone \
-            --depth 1 \
-            --branch dev \
-            https://github.com/MorpheApp/morphe-patches.git \
-            morphe-patches
-
-          echo "Morphe patches:"
-          ls -la morphe-patches
-
-
-      # ==================================================
-      # PATCH YOUTUBE DEV
-      # ==================================================
-
-      - name: Patch YouTube DEV
+      - name: Patch YouTube - DEV
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
@@ -543,15 +516,20 @@ jobs:
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
           echo "======================================"
-          echo "PATCH YOUTUBE DEV"
+          echo "MORPHE PATCH DEV"
           echo "VERSION: $VERSION"
+          echo "PATCH SOURCE:"
+          echo "https://github.com/MorpheApp/morphe-patches"
+          echo "MODE: DEV / PRERELEASE"
           echo "======================================"
 
           java \
             -jar morphe-cli.jar \
             patch \
-            "$APK" \
-            --patches morphe-patches
+            --patches \
+            https://github.com/MorpheApp/morphe-patches \
+            --prerelease \
+            "$APK"
 
 
       # ==================================================
@@ -563,6 +541,10 @@ jobs:
         run: |
           set -e
 
+          echo "======================================"
+          echo "APK FILES"
+          echo "======================================"
+
           find . \
             -type f \
             -name "*.apk" \
@@ -570,7 +552,7 @@ jobs:
 
 
       # ==================================================
-      # RENAME PATCHED APK
+      # RENAME
       # ==================================================
 
       - name: Rename patched APK
@@ -602,6 +584,7 @@ jobs:
             "$SOURCE" \
             "$OUTPUT"
 
+          echo "Patched DEV APK:"
           ls -lh "$OUTPUT"
 
 
@@ -629,7 +612,7 @@ jobs:
       # CREATE DEV RELEASE
       # ==================================================
 
-      - name: Create dev release
+      - name: Create DEV Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -642,7 +625,6 @@ jobs:
           APK="youtube-morphe-dev-${VERSION}.apk"
 
           SHA="${APK}.sha256"
-
 
           echo "======================================"
           echo "CREATE DEV RELEASE"
@@ -665,6 +647,8 @@ jobs:
             "$TAG" \
             "$APK" \
             "$SHA" \
-            --title "YouTube Morphe DEV ${VERSION}" \
+            --title \
+            "YouTube Morphe DEV ${VERSION}" \
             --prerelease \
-            --notes "YouTube ${VERSION} patched with MorpheApp patches dev."
+            --notes \
+            "YouTube ${VERSION} patched with MorpheApp patches DEV."
