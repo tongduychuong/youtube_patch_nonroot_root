@@ -151,39 +151,39 @@ jobs:
           cd morphe-builder
 
           cat > config.toml <<EOF
-enable-module-update = false
-parallel-jobs = 1
-patches-version = "latest"
-cli-version = "latest"
-
-[YouTube]
-
-enabled = true
-
-app-name = "YouTube"
-
-version = "${VERSION}"
-
-arch = "all"
-
-build-mode = "both"
-
-rv-brand = "Morphe"
-
-apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/youtube"
-
-patches-source = "MorpheApp/morphe-patches"
-
-cli-source = "MorpheApp/morphe-desktop"
-
-excluded-patches = "\"Custom branding\""
-EOF
-
-          echo "======================================"
-          echo "CONFIG"
-          echo "======================================"
-
-          cat config.toml
+          enable-module-update = false
+          parallel-jobs = 1
+          patches-version = "latest"
+          cli-version = "latest"
+          
+          [YouTube]
+          
+          enabled = true
+          
+          app-name = "YouTube"
+          
+          version = "${VERSION}"
+          
+          arch = "all"
+          
+          build-mode = "both"
+          
+          rv-brand = "Morphe"
+          
+          apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/youtube"
+          
+          patches-source = "MorpheApp/morphe-patches"
+          
+          cli-source = "MorpheApp/morphe-desktop"
+          
+          excluded-patches = "\"Custom branding\""
+          EOF
+          
+                    echo "======================================"
+                    echo "CONFIG"
+                    echo "======================================"
+          
+                    cat config.toml
 
 
       # ----------------------------------------------
