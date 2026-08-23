@@ -2,16 +2,23 @@ name: YouTube Morphe Patch
 
 "on":
   workflow_dispatch:
+
   schedule:
+    # 23:00 Vietnam time = 16:00 UTC
     - cron: "0 16 * * *"
 
 permissions:
   contents: write
 
 env:
-  MORPHE_PATCHES: https://github.com/MorpheApp/morphe-patches
+  MORPHE_REPO: MorpheApp/morphe-patches
+  RELEASE_TAG: youtube-morphe
 
 jobs:
+
+  # ==========================================================
+  # STABLE
+  # ==========================================================
 
   stable:
     name: Stable
@@ -42,9 +49,14 @@ jobs:
             p7zip-full \
             zipalign \
             apksigner \
-            openssl
+            openssl \
+            jq
 
-      - name: Read stable version
+      # ======================================================
+      # YOUTUBE VERSION
+      # ======================================================
+
+      - name: Read stable YouTube version
         shell: bash
         run: |
           set -e
@@ -53,13 +65,92 @@ jobs:
 
           VERSION="$(tr -d '\r\n' < version.txt | xargs)"
 
-          test -n "$VERSION"
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: version.txt is empty"
+            exit 1
+          fi
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-          echo "Stable version: $VERSION"
+          echo "YouTube Stable: $VERSION"
+
+      # ======================================================
+      # MORPHE MAIN RELEASE
+      # ======================================================
+
+      - name: Get Morphe main release
+        shell: bash
+        run: |
+          set -e
+
+          RESPONSE="$(
+            curl -fsSL \
+              --retry 5 \
+              --retry-delay 2 \
+              -H "Accept: application/vnd.github+json" \
+              -H "User-Agent: GitHubActions" \
+              "https://api.github.com/repos/${MORPHE_REPO}/releases/latest"
+          )"
+
+          TAG="$(
+            echo "$RESPONSE" |
+            jq -r '.tag_name'
+          )"
+
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "ERROR: Morphe main release not found"
+            exit 1
+          fi
+
+          echo "MORPHE_VERSION=$TAG" >> "$GITHUB_ENV"
+
+          echo "Morphe Main: $TAG"
+
+      # ======================================================
+      # CHECK PREVIOUS BUILD
+      # ======================================================
+
+      - name: Check stable patch version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          BUILD="true"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+
+            gh release view "$RELEASE_TAG" \
+              --json body \
+              --jq '.body' \
+              > release_notes.txt
+
+            if grep -Fq \
+              "Morphe Patch ${MORPHE_VERSION} Changelog" \
+              release_notes.txt; then
+
+              echo "======================================"
+              echo "Stable patch already built"
+              echo "======================================"
+
+              echo "Morphe: $MORPHE_VERSION"
+              echo "BUILD_STABLE=false"
+
+              BUILD="false"
+
+            fi
+
+          fi
+
+          echo "BUILD_STABLE=$BUILD" >> "$GITHUB_ENV"
+
+      # ======================================================
+      # DOWNLOAD YOUTUBE
+      # ======================================================
 
       - name: Download YouTube
+        if: env.BUILD_STABLE == 'true'
         shell: bash
         run: |
           set -e
@@ -68,7 +159,12 @@ jobs:
 
           node scripts/download_youtube.js "$VERSION"
 
+      # ======================================================
+      # FIND APK
+      # ======================================================
+
       - name: Find YouTube APK
+        if: env.BUILD_STABLE == 'true'
         shell: bash
         run: |
           set -e
@@ -88,38 +184,44 @@ jobs:
 
           echo "INPUT=$INPUT" >> "$GITHUB_ENV"
 
-          echo "YouTube APK: $INPUT"
+          echo "Input: $INPUT"
+
+      # ======================================================
+      # MORPHE CLI
+      # ======================================================
 
       - name: Download Morphe CLI
+        if: env.BUILD_STABLE == 'true'
         shell: bash
         run: |
           set -e
 
-          API="https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
-
           RESPONSE="$(
             curl -fsSL \
-              --retry 3 \
+              --retry 5 \
               --retry-delay 2 \
               -H "Accept: application/vnd.github+json" \
               -H "User-Agent: GitHubActions" \
-              "$API"
+              "https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
           )"
 
           URL="$(
             echo "$RESPONSE" |
-            grep -o \
-              'https://[^"]*morphe-desktop-[^"]*-all\.jar' |
+            jq -r '
+              .assets[]
+              | select(.name | endswith("-all.jar"))
+              | .browser_download_url
+            ' |
             head -n 1
           )"
 
-          if [ -z "$URL" ]; then
+          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
             echo "ERROR: Morphe CLI not found"
             exit 1
           fi
 
           curl -fL \
-            --retry 3 \
+            --retry 5 \
             --retry-delay 2 \
             -H "User-Agent: GitHubActions" \
             "$URL" \
@@ -127,7 +229,12 @@ jobs:
 
           test -s morphe-cli.jar
 
-      - name: Build Non Root
+      # ======================================================
+      # NON ROOT
+      # ======================================================
+
+      - name: Build Stable Non Root
+        if: env.BUILD_STABLE == 'true'
         shell: bash
         run: |
           set -e
@@ -139,7 +246,12 @@ jobs:
             "$INPUT" \
             stable
 
-      - name: Build Root
+      # ======================================================
+      # ROOT
+      # ======================================================
+
+      - name: Build Stable Root
+        if: env.BUILD_STABLE == 'true'
         shell: bash
         run: |
           set -e
@@ -151,29 +263,37 @@ jobs:
             "$INPUT" \
             stable
 
+      # ======================================================
+      # COMMIT KEYSTORE
+      # ======================================================
+
       - name: Commit encrypted keystore
+        if: env.BUILD_STABLE == 'true'
         shell: bash
         run: |
           set -e
 
-          if [ ! -f keys/keystore.enc ]; then
-            echo "ERROR: keys/keystore.enc was not created"
-            exit 1
-          fi
+          test -f keys/keystore.enc
 
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add keys/keystore.enc
 
           if git diff --cached --quiet; then
-            echo "keystore.enc is already committed"
+            echo "keystore.enc unchanged"
           else
             git commit -m "Update encrypted YouTube keystore"
             git push
           fi
 
+      # ======================================================
+      # ARTIFACT
+      # ======================================================
+
       - name: Upload Stable
+        if: env.BUILD_STABLE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: youtube-morphe-stable
@@ -182,6 +302,10 @@ jobs:
             youtube_root_mount_${{ env.VERSION }}_Magisk.zip
           retention-days: 1
 
+
+  # ==========================================================
+  # DEV
+  # ==========================================================
 
   dev:
     name: Dev
@@ -212,9 +336,14 @@ jobs:
             p7zip-full \
             zipalign \
             apksigner \
-            openssl
+            openssl \
+            jq
 
-      - name: Read dev version
+      # ======================================================
+      # YOUTUBE DEV VERSION
+      # ======================================================
+
+      - name: Read dev YouTube version
         shell: bash
         run: |
           set -e
@@ -223,13 +352,98 @@ jobs:
 
           VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
 
-          test -n "$VERSION"
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: version_dev.txt is empty"
+            exit 1
+          fi
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-          echo "Dev version: $VERSION"
+          echo "YouTube Dev: $VERSION"
+
+      # ======================================================
+      # MORPHE DEV RELEASE
+      # ======================================================
+
+      - name: Get Morphe dev release
+        shell: bash
+        run: |
+          set -e
+
+          RESPONSE="$(
+            curl -fsSL \
+              --retry 5 \
+              --retry-delay 2 \
+              -H "Accept: application/vnd.github+json" \
+              -H "User-Agent: GitHubActions" \
+              "https://api.github.com/repos/${MORPHE_REPO}/releases?per_page=100"
+          )"
+
+          TAG="$(
+            echo "$RESPONSE" |
+            jq -r '
+              [
+                .[]
+                | select(.prerelease == true)
+                | .tag_name
+              ][0]
+            '
+          )"
+
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "ERROR: Morphe dev release not found"
+            exit 1
+          fi
+
+          echo "MORPHE_VERSION=$TAG" >> "$GITHUB_ENV"
+
+          echo "Morphe Dev: $TAG"
+
+      # ======================================================
+      # CHECK PREVIOUS BUILD
+      # ======================================================
+
+      - name: Check dev patch version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          BUILD="true"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+
+            gh release view "$RELEASE_TAG" \
+              --json body \
+              --jq '.body' \
+              > release_notes.txt
+
+            if grep -Fq \
+              "Morphe Patch ${MORPHE_VERSION} Changelog" \
+              release_notes.txt; then
+
+              echo "======================================"
+              echo "Dev patch already built"
+              echo "======================================"
+
+              echo "Morphe: $MORPHE_VERSION"
+              echo "BUILD_DEV=false"
+
+              BUILD="false"
+
+            fi
+
+          fi
+
+          echo "BUILD_DEV=$BUILD" >> "$GITHUB_ENV"
+
+      # ======================================================
+      # DOWNLOAD YOUTUBE
+      # ======================================================
 
       - name: Download YouTube
+        if: env.BUILD_DEV == 'true'
         shell: bash
         run: |
           set -e
@@ -238,7 +452,12 @@ jobs:
 
           node scripts/download_youtube.js "$VERSION"
 
+      # ======================================================
+      # FIND APK
+      # ======================================================
+
       - name: Find YouTube APK
+        if: env.BUILD_DEV == 'true'
         shell: bash
         run: |
           set -e
@@ -258,38 +477,44 @@ jobs:
 
           echo "INPUT=$INPUT" >> "$GITHUB_ENV"
 
-          echo "YouTube APK: $INPUT"
+          echo "Input: $INPUT"
+
+      # ======================================================
+      # MORPHE CLI
+      # ======================================================
 
       - name: Download Morphe CLI
+        if: env.BUILD_DEV == 'true'
         shell: bash
         run: |
           set -e
 
-          API="https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
-
           RESPONSE="$(
             curl -fsSL \
-              --retry 3 \
+              --retry 5 \
               --retry-delay 2 \
               -H "Accept: application/vnd.github+json" \
               -H "User-Agent: GitHubActions" \
-              "$API"
+              "https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
           )"
 
           URL="$(
             echo "$RESPONSE" |
-            grep -o \
-              'https://[^"]*morphe-desktop-[^"]*-all\.jar' |
+            jq -r '
+              .assets[]
+              | select(.name | endswith("-all.jar"))
+              | .browser_download_url
+            ' |
             head -n 1
           )"
 
-          if [ -z "$URL" ]; then
+          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
             echo "ERROR: Morphe CLI not found"
             exit 1
           fi
 
           curl -fL \
-            --retry 3 \
+            --retry 5 \
             --retry-delay 2 \
             -H "User-Agent: GitHubActions" \
             "$URL" \
@@ -297,7 +522,12 @@ jobs:
 
           test -s morphe-cli.jar
 
-      - name: Build Non Root
+      # ======================================================
+      # NON ROOT
+      # ======================================================
+
+      - name: Build Dev Non Root
+        if: env.BUILD_DEV == 'true'
         shell: bash
         run: |
           set -e
@@ -309,7 +539,12 @@ jobs:
             "$INPUT" \
             dev
 
-      - name: Build Root
+      # ======================================================
+      # ROOT
+      # ======================================================
+
+      - name: Build Dev Root
+        if: env.BUILD_DEV == 'true'
         shell: bash
         run: |
           set -e
@@ -321,29 +556,37 @@ jobs:
             "$INPUT" \
             dev
 
+      # ======================================================
+      # COMMIT KEYSTORE
+      # ======================================================
+
       - name: Commit encrypted keystore
+        if: env.BUILD_DEV == 'true'
         shell: bash
         run: |
           set -e
 
-          if [ ! -f keys/keystore.enc ]; then
-            echo "ERROR: keys/keystore.enc was not created"
-            exit 1
-          fi
+          test -f keys/keystore.enc
 
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add keys/keystore.enc
 
           if git diff --cached --quiet; then
-            echo "keystore.enc is already committed"
+            echo "keystore.enc unchanged"
           else
             git commit -m "Update encrypted YouTube keystore"
             git push
           fi
 
+      # ======================================================
+      # ARTIFACT
+      # ======================================================
+
       - name: Upload Dev
+        if: env.BUILD_DEV == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: youtube-morphe-dev
@@ -353,12 +596,18 @@ jobs:
           retention-days: 1
 
 
+  # ==========================================================
+  # RELEASE
+  # ==========================================================
+
   release:
     name: Common Release
 
     needs:
       - stable
       - dev
+
+    if: always()
 
     runs-on: ubuntu-latest
 
@@ -367,19 +616,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ======================================================
+      # ARTIFACTS
+      # ======================================================
+
       - name: Download Stable
+        if: needs.stable.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: youtube-morphe-stable
           path: release
 
       - name: Download Dev
+        if: needs.dev.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: youtube-morphe-dev
           path: release
 
-      - name: Read versions
+      # ======================================================
+      # VERSIONS
+      # ======================================================
+
+      - name: Read YouTube versions
         shell: bash
         run: |
           set -e
@@ -390,6 +649,131 @@ jobs:
           echo "MAIN_VERSION=$MAIN_VERSION" >> "$GITHUB_ENV"
           echo "DEV_VERSION=$DEV_VERSION" >> "$GITHUB_ENV"
 
+      # ======================================================
+      # GET MORPHE VERSIONS
+      # ======================================================
+
+      - name: Get current Morphe versions
+        shell: bash
+        run: |
+          set -e
+
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+          MAIN_RESPONSE="$(
+            curl -fsSL \
+              --retry 5 \
+              --retry-delay 2 \
+              "https://api.github.com/repos/${MORPHE_REPO}/releases/latest"
+          )"
+
+          MAIN_MORPHE="$(
+            echo "$MAIN_RESPONSE" |
+            jq -r '.tag_name'
+          )"
+
+          DEV_RESPONSE="$(
+            curl -fsSL \
+              --retry 5 \
+              --retry-delay 2 \
+              "https://api.github.com/repos/${MORPHE_REPO}/releases?per_page=100"
+          )"
+
+          DEV_MORPHE="$(
+            echo "$DEV_RESPONSE" |
+            jq -r '
+              [
+                .[]
+                | select(.prerelease == true)
+                | .tag_name
+              ][0]
+            '
+          )"
+
+          echo "MORPHE_MAIN_VERSION=$MAIN_MORPHE" >> "$GITHUB_ENV"
+          echo "MORPHE_DEV_VERSION=$DEV_MORPHE" >> "$GITHUB_ENV"
+
+      # ======================================================
+      # CHANGELOG
+      # ======================================================
+
+      - name: Update Release changelog
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          TAG="$RELEASE_TAG"
+
+          MAIN_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_MAIN_VERSION}"
+
+          DEV_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_DEV_VERSION}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+
+            gh release view "$TAG" \
+              --json body \
+              --jq '.body' \
+              > release_notes.txt
+
+          else
+
+            touch release_notes.txt
+
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("release_notes.txt")
+
+          text = path.read_text() if path.exists() else ""
+
+          text = re.sub(
+              r'(?ms)^## Morphe Patch.*?(?=^## |\Z)',
+              '',
+              text
+          )
+
+          path.write_text(text.strip() + "\n")
+          PY
+
+          cat >> release_notes.txt <<EOF
+
+          ## Morphe Patch
+
+          ### Stable
+
+          **${MORPHE_MAIN_VERSION}**
+
+          [Morphe Patch ${MORPHE_MAIN_VERSION} Changelog](${MAIN_URL})
+
+          ### Dev
+
+          **${MORPHE_DEV_VERSION}**
+
+          [Morphe Patch ${MORPHE_DEV_VERSION} Changelog](${DEV_URL})
+
+          ## YouTube
+
+          - Stable: ${MAIN_VERSION}
+          - Dev: ${DEV_VERSION}
+
+          ## Build
+
+          - Stable Non-root
+          - Stable Root Magisk
+          - Dev Non-root
+          - Dev Root Magisk
+          EOF
+
+      # ======================================================
+      # CREATE / UPDATE RELEASE
+      # ======================================================
+
       - name: Create or Update Release
         shell: bash
         env:
@@ -397,44 +781,200 @@ jobs:
         run: |
           set -e
 
-          TAG="youtube-morphe"
+          TAG="$RELEASE_TAG"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release already exists"
-          else
-            gh release create "$TAG" \
-              --title "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
-              --notes "YouTube Morphe
 
-                Stable: ${MAIN_VERSION}
-                Dev: ${DEV_VERSION}
-                
-                NON ROOT
-                - Morphe patches main
-                - Custom branding disabled
-                - GmsCore support enabled
-                
-                ROOT
-                - Morphe patches main
-                - --mount enabled
-                - GmsCore support disabled
-                - Custom branding disabled
-                - Stock APK included
-                - bin included when available
-                
+            gh release edit "$TAG" \
+              --title \
+              "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
+              --notes-file release_notes.txt
+
+          else
+
+            gh release create "$TAG" \
+              --title \
+              "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
+              --notes-file release_notes.txt
+
           fi
 
-          gh release edit "$TAG" \
-            --title "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}"
+      # ======================================================
+      # UPLOAD APK / ZIP
+      # ======================================================
 
-          find release \
-            -type f \
-            \( -name "*.apk" -o -name "*.zip" \) \
-            -print0 |
-          xargs -0 -r gh release upload "$TAG" --clobber
+      - name: Upload Release files
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          if [ ! -d release ]; then
+            echo "No release artifacts."
+            exit 0
+          fi
+
+          while IFS= read -r -d '' FILE; do
+
+            gh release upload \
+              "$RELEASE_TAG" \
+              "$FILE" \
+              --clobber
+
+          done < <(
+            find release \
+              -type f \
+              \( \
+                -name "*.apk" \
+                -o \
+                -name "*.zip" \
+              \) \
+              -print0
+          )
+
+      # ======================================================
+      # SUMMARY
+      # ======================================================
+
+      - name: Summary
+        shell: bash
+        run: |
+          echo "======================================"
+          echo "YouTube Morphe completed"
+          echo "======================================"
+          echo "YouTube Stable : $MAIN_VERSION"
+          echo "YouTube Dev    : $DEV_VERSION"
+          echo "Morphe Stable  : $MORPHE_MAIN_VERSION"
+          echo "Morphe Dev     : $MORPHE_DEV_VERSION"
+          echo "Release        : $RELEASE_TAG"
+          echo "======================================"
+
+
+  # ==========================================================
+  # CLEANUP
+  # ==========================================================
+
+  cleanup:
+    name: Cleanup Old Releases and Workflows
+
+    needs:
+      - release
+
+    if: needs.release.result == 'success'
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Cleanup old releases and tags
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
 
           echo "======================================"
-          echo "RELEASE SUCCESS"
+          echo "Cleanup Releases"
+          echo "Keep newest: 3"
           echo "======================================"
 
-          gh release view "$TAG"
+          gh release list \
+            --limit 100 \
+            --json tagName,publishedAt \
+            > releases.json
+
+          TOTAL="$(jq 'length' releases.json)"
+
+          echo "Total releases: $TOTAL"
+
+          if [ "$TOTAL" -gt 3 ]; then
+
+            jq -r '
+              sort_by(.publishedAt)
+              | reverse
+              | .[3:]
+              | .[].tagName
+            ' releases.json |
+            while IFS= read -r TAG; do
+
+              [ -z "$TAG" ] && continue
+
+              echo "Deleting release: $TAG"
+
+              gh release delete \
+                "$TAG" \
+                --yes
+
+              echo "Deleting tag: $TAG"
+
+              gh api \
+                --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+                || true
+
+            done
+
+          else
+
+            echo "Release count <= 3"
+            echo "Nothing to delete."
+
+          fi
+
+      # ======================================================
+      # WORKFLOW CLEANUP
+      # ======================================================
+
+      - name: Cleanup old workflow runs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "Cleanup Workflow Runs"
+          echo "Keep newest: 3"
+          echo "======================================"
+
+          WORKFLOW_FILE="patch.yml"
+
+          gh run list \
+            --workflow "$WORKFLOW_FILE" \
+            --limit 100 \
+            --json databaseId,createdAt \
+            > workflow_runs.json
+
+          TOTAL="$(jq 'length' workflow_runs.json)"
+
+          echo "Total workflow runs: $TOTAL"
+
+          if [ "$TOTAL" -gt 3 ]; then
+
+            jq -r '
+              sort_by(.createdAt)
+              | reverse
+              | .[3:]
+              | .[].databaseId
+            ' workflow_runs.json |
+            while IFS= read -r RUN_ID; do
+
+              [ -z "$RUN_ID" ] && continue
+
+              echo "Deleting workflow run: $RUN_ID"
+
+              gh run delete "$RUN_ID"
+
+            done
+
+          else
+
+            echo "Workflow run count <= 3"
+            echo "Nothing to delete."
+
+          fi
+
+          echo "======================================"
+          echo "Cleanup completed"
+          echo "======================================"
