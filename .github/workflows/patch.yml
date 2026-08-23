@@ -2,13 +2,20 @@ name: YouTube Morphe Patch
 
 "on":
   workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Force build Stable + Dev"
+        required: false
+        type: boolean
+        default: true
 
   schedule:
-    # 23:00 Vietnam time = 16:00 UTC
-    - cron: "0 16 * * *"
+    # 05:00 Vietnam time (UTC+7) = 22:00 UTC
+    - cron: "0 22 * * *"
 
 permissions:
   contents: write
+  actions: write
 
 env:
   MORPHE_REPO: MorpheApp/morphe-patches
@@ -26,6 +33,9 @@ jobs:
 
     env:
       KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
+
+    permissions:
+      contents: write
 
     steps:
 
@@ -107,7 +117,7 @@ jobs:
           echo "Morphe Main: $TAG"
 
       # ======================================================
-      # CHECK PREVIOUS BUILD
+      # CHECK PATCH VERSION
       # ======================================================
 
       - name: Check stable patch version
@@ -116,6 +126,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+
+            echo "======================================"
+            echo "MANUAL RUN"
+            echo "Force Stable build: YES"
+            echo "======================================"
+
+            echo "BUILD_STABLE=true" >> "$GITHUB_ENV"
+
+            exit 0
+
+          fi
 
           BUILD="true"
 
@@ -130,16 +153,19 @@ jobs:
               "Morphe Patch ${MORPHE_VERSION} Changelog" \
               release_notes.txt; then
 
-              echo "======================================"
-              echo "Stable patch already built"
-              echo "======================================"
-
-              echo "Morphe: $MORPHE_VERSION"
-              echo "BUILD_STABLE=false"
-
+              echo "Morphe $MORPHE_VERSION already built"
               BUILD="false"
 
+            else
+
+              echo "New Stable patch: $MORPHE_VERSION"
+
             fi
+
+          else
+
+            echo "Release does not exist."
+            echo "Stable will build."
 
           fi
 
@@ -154,8 +180,6 @@ jobs:
         shell: bash
         run: |
           set -e
-
-          test -f scripts/download_youtube.js
 
           node scripts/download_youtube.js "$VERSION"
 
@@ -230,7 +254,7 @@ jobs:
           test -s morphe-cli.jar
 
       # ======================================================
-      # NON ROOT
+      # BUILD NON ROOT
       # ======================================================
 
       - name: Build Stable Non Root
@@ -247,7 +271,7 @@ jobs:
             stable
 
       # ======================================================
-      # ROOT
+      # BUILD ROOT
       # ======================================================
 
       - name: Build Stable Root
@@ -264,7 +288,7 @@ jobs:
             stable
 
       # ======================================================
-      # COMMIT KEYSTORE
+      # KEYSTORE
       # ======================================================
 
       - name: Commit encrypted keystore
@@ -313,6 +337,9 @@ jobs:
 
     env:
       KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
+
+    permissions:
+      contents: write
 
     steps:
 
@@ -400,7 +427,7 @@ jobs:
           echo "Morphe Dev: $TAG"
 
       # ======================================================
-      # CHECK PREVIOUS BUILD
+      # CHECK PATCH VERSION
       # ======================================================
 
       - name: Check dev patch version
@@ -409,6 +436,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+
+            echo "======================================"
+            echo "MANUAL RUN"
+            echo "Force Dev build: YES"
+            echo "======================================"
+
+            echo "BUILD_DEV=true" >> "$GITHUB_ENV"
+
+            exit 0
+
+          fi
 
           BUILD="true"
 
@@ -423,16 +463,19 @@ jobs:
               "Morphe Patch ${MORPHE_VERSION} Changelog" \
               release_notes.txt; then
 
-              echo "======================================"
-              echo "Dev patch already built"
-              echo "======================================"
-
-              echo "Morphe: $MORPHE_VERSION"
-              echo "BUILD_DEV=false"
-
+              echo "Morphe $MORPHE_VERSION already built"
               BUILD="false"
 
+            else
+
+              echo "New Dev patch: $MORPHE_VERSION"
+
             fi
+
+          else
+
+            echo "Release does not exist."
+            echo "Dev will build."
 
           fi
 
@@ -447,8 +490,6 @@ jobs:
         shell: bash
         run: |
           set -e
-
-          test -f scripts/download_youtube.js
 
           node scripts/download_youtube.js "$VERSION"
 
@@ -476,8 +517,6 @@ jobs:
           fi
 
           echo "INPUT=$INPUT" >> "$GITHUB_ENV"
-
-          echo "Input: $INPUT"
 
       # ======================================================
       # MORPHE CLI
@@ -523,7 +562,7 @@ jobs:
           test -s morphe-cli.jar
 
       # ======================================================
-      # NON ROOT
+      # BUILD NON ROOT
       # ======================================================
 
       - name: Build Dev Non Root
@@ -540,7 +579,7 @@ jobs:
             dev
 
       # ======================================================
-      # ROOT
+      # BUILD ROOT
       # ======================================================
 
       - name: Build Dev Root
@@ -557,7 +596,7 @@ jobs:
             dev
 
       # ======================================================
-      # COMMIT KEYSTORE
+      # KEYSTORE
       # ======================================================
 
       - name: Commit encrypted keystore
@@ -611,13 +650,16 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     steps:
 
       - name: Checkout
         uses: actions/checkout@v4
 
       # ======================================================
-      # ARTIFACTS
+      # DOWNLOAD ARTIFACTS
       # ======================================================
 
       - name: Download Stable
@@ -635,7 +677,7 @@ jobs:
           path: release
 
       # ======================================================
-      # VERSIONS
+      # READ VERSIONS
       # ======================================================
 
       - name: Read YouTube versions
@@ -650,7 +692,7 @@ jobs:
           echo "DEV_VERSION=$DEV_VERSION" >> "$GITHUB_ENV"
 
       # ======================================================
-      # GET MORPHE VERSIONS
+      # MORPHE VERSIONS
       # ======================================================
 
       - name: Get current Morphe versions
@@ -707,10 +749,6 @@ jobs:
 
           TAG="$RELEASE_TAG"
 
-          MAIN_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_MAIN_VERSION}"
-
-          DEV_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_DEV_VERSION}"
-
           if gh release view "$TAG" >/dev/null 2>&1; then
 
             gh release view "$TAG" \
@@ -743,31 +781,25 @@ jobs:
 
           cat >> release_notes.txt <<EOF
 
+          ## YouTube
+
+          - Stable: ${MAIN_VERSION}
+          - Dev: ${DEV_VERSION}
+
           ## Morphe Patch
 
           ### Stable
 
           **${MORPHE_MAIN_VERSION}**
 
-          [Morphe Patch ${MORPHE_MAIN_VERSION} Changelog](${MAIN_URL})
+          [Morphe Patch ${MORPHE_MAIN_VERSION} Changelog](https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_MAIN_VERSION})
 
           ### Dev
 
           **${MORPHE_DEV_VERSION}**
 
-          [Morphe Patch ${MORPHE_DEV_VERSION} Changelog](${DEV_URL})
+          [Morphe Patch ${MORPHE_DEV_VERSION} Changelog](https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_DEV_VERSION})
 
-          ## YouTube
-
-          - Stable: ${MAIN_VERSION}
-          - Dev: ${DEV_VERSION}
-
-          ## Build
-
-          - Stable Non-root
-          - Stable Root Magisk
-          - Dev Non-root
-          - Dev Root Magisk
           EOF
 
       # ======================================================
@@ -817,6 +849,8 @@ jobs:
 
           while IFS= read -r -d '' FILE; do
 
+            echo "Uploading: $FILE"
+
             gh release upload \
               "$RELEASE_TAG" \
               "$FILE" \
@@ -832,10 +866,6 @@ jobs:
               \) \
               -print0
           )
-
-      # ======================================================
-      # SUMMARY
-      # ======================================================
 
       - name: Summary
         shell: bash
@@ -865,7 +895,24 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+      actions: write
+
     steps:
+
+      - name: Install jq
+        shell: bash
+        run: |
+          set -e
+
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      # ======================================================
+      # RELEASE + TAG
+      # KEEP 3
+      # ======================================================
 
       - name: Cleanup old releases and tags
         shell: bash
@@ -875,8 +922,8 @@ jobs:
           set -e
 
           echo "======================================"
-          echo "Cleanup Releases"
-          echo "Keep newest: 3"
+          echo "RELEASE CLEANUP"
+          echo "Keep newest 3"
           echo "======================================"
 
           gh release list \
@@ -910,7 +957,7 @@ jobs:
 
               gh api \
                 --method DELETE \
-                "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
+                "/repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
                 || true
 
             done
@@ -923,7 +970,8 @@ jobs:
           fi
 
       # ======================================================
-      # WORKFLOW CLEANUP
+      # WORKFLOW RUNS
+      # KEEP 3
       # ======================================================
 
       - name: Cleanup old workflow runs
@@ -934,47 +982,101 @@ jobs:
           set -e
 
           echo "======================================"
-          echo "Cleanup Workflow Runs"
-          echo "Keep newest: 3"
+          echo "WORKFLOW RUN CLEANUP"
+          echo "Workflow: patch.yml"
+          echo "Keep newest 3"
           echo "======================================"
 
-          WORKFLOW_FILE="patch.yml"
+          WORKFLOW_ID="$(
+            gh api \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows" |
+            jq -r '
+              .workflows[]
+              | select(.path == ".github/workflows/patch.yml")
+              | .id
+            ' |
+            head -n 1
+          )"
 
-          gh run list \
-            --workflow "$WORKFLOW_FILE" \
-            --limit 100 \
-            --json databaseId,createdAt \
-            > workflow_runs.json
+          if [ -z "$WORKFLOW_ID" ] || [ "$WORKFLOW_ID" = "null" ]; then
+
+            echo "ERROR: patch.yml workflow not found"
+            exit 1
+
+          fi
+
+          echo "Workflow ID: $WORKFLOW_ID"
+
+          gh api \
+            --paginate \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs?per_page=100" \
+            > workflow_pages.json
+
+          jq -s '
+            map(.workflow_runs)
+            | add
+            | unique_by(.id)
+            | sort_by(.created_at)
+            | reverse
+          ' workflow_pages.json > workflow_runs.json
 
           TOTAL="$(jq 'length' workflow_runs.json)"
 
-          echo "Total workflow runs: $TOTAL"
+          echo "Total runs: $TOTAL"
 
-          if [ "$TOTAL" -gt 3 ]; then
+          if [ "$TOTAL" -le 3 ]; then
+
+            echo "Workflow runs <= 3"
+            echo "Nothing to delete."
+
+          else
+
+            echo "Deleting $((TOTAL - 3)) old runs..."
 
             jq -r '
-              sort_by(.createdAt)
-              | reverse
-              | .[3:]
-              | .[].databaseId
+              .[3:]
+              | .[].id
             ' workflow_runs.json |
             while IFS= read -r RUN_ID; do
 
               [ -z "$RUN_ID" ] && continue
 
+              echo "--------------------------------------"
               echo "Deleting workflow run: $RUN_ID"
 
-              gh run delete "$RUN_ID"
+              HTTP_CODE="$(
+                curl \
+                  -s \
+                  -o /tmp/delete_response.txt \
+                  -w "%{http_code}" \
+                  -X DELETE \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+              )"
+
+              if [ "$HTTP_CODE" = "204" ]; then
+
+                echo "Deleted successfully."
+
+              elif [ "$HTTP_CODE" = "404" ]; then
+
+                echo "Already deleted / not found."
+
+              else
+
+                echo "ERROR: HTTP $HTTP_CODE"
+                cat /tmp/delete_response.txt
+
+                exit 1
+
+              fi
 
             done
-
-          else
-
-            echo "Workflow run count <= 3"
-            echo "Nothing to delete."
 
           fi
 
           echo "======================================"
-          echo "Cleanup completed"
+          echo "CLEANUP COMPLETE"
           echo "======================================"
