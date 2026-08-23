@@ -25,6 +25,13 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Install tools
+        shell: bash
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full zipalign apksigner
+
       - name: Read version
         shell: bash
         run: |
@@ -39,6 +46,8 @@ jobs:
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
+          echo "Stable: $VERSION"
+
       - name: Download YouTube
         shell: bash
         run: |
@@ -48,19 +57,14 @@ jobs:
 
           node scripts/download_youtube.js "$VERSION"
 
-      - name: Find YouTube
+      - name: Find YouTube APK
         shell: bash
         run: |
           set -e
 
           INPUT="$(
             find . -maxdepth 3 -type f \
-              \( \
-                -name "*.apk" \
-                -o -name "*.apkm" \
-                -o -name "*.xapk" \
-                -o -name "*.apks" \
-              \) |
+              -name "*.apk" |
             head -n 1
           )"
 
@@ -71,9 +75,9 @@ jobs:
 
           echo "INPUT=$INPUT" >> "$GITHUB_ENV"
 
-          echo "YouTube: $INPUT"
+          echo "YouTube APK: $INPUT"
 
-      - name: Download Morphe
+      - name: Download Morphe CLI
         shell: bash
         run: |
           set -e
@@ -109,6 +113,12 @@ jobs:
             -o morphe-cli.jar
 
           test -s morphe-cli.jar
+
+      # -------------------------------------------------
+      # NON ROOT
+      # GmsCore support ENABLED
+      # Custom branding DISABLED
+      # -------------------------------------------------
 
       - name: Patch Stable Non Root
         shell: bash
@@ -125,6 +135,12 @@ jobs:
 
           test -f "youtube-morphe-${VERSION}.apk"
 
+      # -------------------------------------------------
+      # ROOT
+      # GmsCore support DISABLED
+      # Custom branding DISABLED
+      # -------------------------------------------------
+
       - name: Patch Stable Root
         shell: bash
         run: |
@@ -136,64 +152,110 @@ jobs:
             https://github.com/MorpheApp/morphe-patches \
             --disable "GmsCore support" \
             --disable "Custom branding" \
-            -o "youtube-morphe-root-apk-${VERSION}.apk" \
+            -o "youtube-root-${VERSION}.apk" \
             "$INPUT"
 
-          test -f "youtube-morphe-root-apk-${VERSION}.apk"
+          test -f "youtube-root-${VERSION}.apk"
 
-      - name: Create Stable Magisk Module
+      # -------------------------------------------------
+      # CREATE ROOT MAGISK ZIP
+      # Based on build_module(2).sh
+      # -------------------------------------------------
+
+      - name: Create Stable Magisk Root
         shell: bash
         run: |
           set -e
 
-          sudo apt-get update
-          sudo apt-get install -y p7zip-full
+          MODULE_ID="youtube-morphe-root"
+          MODULE_NAME="YouTube Morphe Root"
+          ZIP_OUT="youtube-morphe-root-${VERSION}.zip"
 
-          rm -rf root-module
+          rm -rf BASE_TEMPLATE
 
-          mkdir -p root-module/stock
-          mkdir -p root-module/patched
-          mkdir -p root-module/system
+          mkdir -p \
+            BASE_TEMPLATE/META-INF/com/google/android \
+            BASE_TEMPLATE/stock
 
-          cp "$INPUT" \
-            root-module/stock/YouTube.apk
+          # Patched APK
+          cp -f \
+            youtube-root-${VERSION}.apk \
+            BASE_TEMPLATE/base.apk
 
-          cp "youtube-morphe-root-apk-${VERSION}.apk" \
-            root-module/patched/YouTube.apk
+          # Stock APK
+          cp -f \
+            "$INPUT" \
+            BASE_TEMPLATE/stock/base.apk
 
-          cat > root-module/module.prop <<EOF
-          id=youtube_morphe
-          name=YouTube Morphe Root
+          # module.prop
+          cat > BASE_TEMPLATE/module.prop <<EOF
+          id=${MODULE_ID}
+          name=${MODULE_NAME}
           version=${VERSION}
-          versionCode=${VERSION}
+          versionCode=$(date +%Y%m%d)
           author=Chuong
-          description=YouTube Morphe Root Magisk Module
+          description=${MODULE_NAME} with Stock APK and patched APK
           EOF
 
-          cat > root-module/customize.sh <<'EOF'
+          # customize.sh
+          cat > BASE_TEMPLATE/customize.sh <<'EOF'
           #!/system/bin/sh
 
           ui_print "======================================"
           ui_print " YouTube Morphe Root"
           ui_print "======================================"
-          ui_print "Stock APK included"
-          ui_print "Patched APK included"
-          ui_print "GmsCore support: Disabled"
-          ui_print "Custom branding: Disabled"
+
+          ui_print "- Stock APK included"
+          ui_print "- Patched APK included"
+          ui_print "- GmsCore support: Disabled"
+          ui_print "- Custom branding: Disabled"
+
+          PKG_NAME="com.google.android.youtube"
+
+          TARGET_APK="$(pm path "$PKG_NAME" 2>/dev/null | head -n 1 | cut -d':' -f2)"
+
+          if [ -z "$TARGET_APK" ]; then
+
+              if [ -f "$MODPATH/stock/base.apk" ]; then
+
+                  ui_print "- YouTube not installed"
+                  ui_print "- Installing stock YouTube..."
+
+                  pm install -r \
+                    "$MODPATH/stock/base.apk" \
+                    >/dev/null 2>&1 || true
+
+              fi
+
+          else
+
+              ui_print "- Stock YouTube found:"
+              ui_print "  $TARGET_APK"
+
+          fi
+
+          set_perm_recursive \
+            "$MODPATH" \
+            0 \
+            0 \
+            0755 \
+            0644
+
+          chmod 0755 "$MODPATH/customize.sh"
+          chmod 0755 "$MODPATH/service.sh"
+
           ui_print "======================================"
           EOF
 
-          cat > root-module/service.sh <<'EOF'
+          # service.sh
+          cat > BASE_TEMPLATE/service.sh <<'EOF'
           #!/system/bin/sh
 
           MODDIR="${0%/*}"
 
-          STOCK="$MODDIR/stock/YouTube.apk"
-          PATCHED="$MODDIR/patched/YouTube.apk"
+          PKG_NAME="com.google.android.youtube"
 
-          PKG="com.google.android.youtube"
-
-          LOG="/data/adb/youtube_morphe.log"
+          LOG="/data/adb/youtube_morphe_root.log"
 
           exec >>"$LOG" 2>&1
 
@@ -201,177 +263,119 @@ jobs:
           echo "YouTube Morphe Root"
           echo "======================================"
 
-          if [ ! -f "$STOCK" ]; then
-              echo "ERROR: Stock APK missing"
-              exit 1
-          fi
-
-          if [ ! -f "$PATCHED" ]; then
-              echo "ERROR: Patched APK missing"
-              exit 1
-          fi
-
-          until [ "$(getprop sys.boot_completed)" = "1" ]; do
-              sleep 2
+          while [ "$(getprop sys.boot_completed)" != "1" ]; do
+              sleep 3
           done
 
           sleep 5
 
-          echo "Detecting YouTube APK..."
-
-          PATHS="$(
-              pm path "$PKG" 2>/dev/null |
-              sed 's/^package://'
+          TARGET_APK="$(
+              pm path "$PKG_NAME" 2>/dev/null |
+              head -n 1 |
+              cut -d':' -f2
           )"
 
-          if [ -z "$PATHS" ]; then
+          if [ -z "$TARGET_APK" ]; then
               echo "ERROR: YouTube package not found"
               exit 1
           fi
 
-          echo "Detected:"
-          echo "$PATHS"
+          echo "Detected YouTube:"
+          echo "$TARGET_APK"
 
-          TARGET=""
-
-          while IFS= read -r APK_PATH; do
-
-              [ -z "$APK_PATH" ] && continue
-
-              case "$APK_PATH" in
-
-                  /system/*/YouTube/*/base.apk)
-                      TARGET="$APK_PATH"
-                      break
-                      ;;
-
-                  /system/*/YouTube/base.apk)
-                      TARGET="$APK_PATH"
-                      break
-                      ;;
-
-                  /product/*/YouTube/*/base.apk)
-                      TARGET="$APK_PATH"
-                      break
-                      ;;
-
-                  /product/*/YouTube/base.apk)
-                      TARGET="$APK_PATH"
-                      break
-                      ;;
-
-                  /system_ext/*/YouTube/*/base.apk)
-                      TARGET="$APK_PATH"
-                      break
-                      ;;
-
-                  /system_ext/*/YouTube/base.apk)
-                      TARGET="$APK_PATH"
-                      break
-                      ;;
-
-                  */base.apk)
-                      if [ -z "$TARGET" ]; then
-                          TARGET="$APK_PATH"
-                      fi
-                      ;;
-
-                  *.apk)
-                      if [ -z "$TARGET" ]; then
-                          TARGET="$APK_PATH"
-                      fi
-                      ;;
-
-              esac
-
-          done <<EOF_PATHS
-          $PATHS
-          EOF_PATHS
-
-          if [ -z "$TARGET" ]; then
-              echo "ERROR: YouTube APK target not found"
+          if [ ! -f "$MODDIR/base.apk" ]; then
+              echo "ERROR: Patched APK missing"
               exit 1
           fi
 
-          echo "Target:"
-          echo "$TARGET"
+          echo "Mounting patched APK..."
 
-          case "$TARGET" in
+          mount -o bind \
+              "$MODDIR/base.apk" \
+              "$TARGET_APK"
 
-              /system/*)
-                  RELATIVE="${TARGET#/system/}"
-                  OVERLAY="$MODDIR/system/$RELATIVE"
-                  ;;
+          RESULT=$?
 
-              /product/*)
-                  RELATIVE="${TARGET#/product/}"
-                  OVERLAY="$MODDIR/product/$RELATIVE"
-                  ;;
+          if [ "$RESULT" -ne 0 ]; then
+              echo "ERROR: Mount failed"
+              exit 1
+          fi
 
-              /system_ext/*)
-                  RELATIVE="${TARGET#/system_ext/}"
-                  OVERLAY="$MODDIR/system_ext/$RELATIVE"
-                  ;;
+          echo "Patched APK mounted."
 
-              /vendor/*)
-                  RELATIVE="${TARGET#/vendor/}"
-                  OVERLAY="$MODDIR/vendor/$RELATIVE"
-                  ;;
+          am force-stop \
+              "$PKG_NAME" \
+              >/dev/null 2>&1 || true
 
-              *)
-                  echo "ERROR: Unsupported system path"
-                  exit 1
-                  ;;
-
-          esac
-
-          echo "Overlay:"
-          echo "$OVERLAY"
-
-          mkdir -p "$(dirname "$OVERLAY")"
-
-          cp "$PATCHED" "$OVERLAY"
-
-          chmod 0644 "$OVERLAY"
-
-          echo "Magisk overlay prepared"
-
-          echo "Stock APK:"
-          ls -lh "$STOCK"
-
-          echo "Patched APK:"
-          ls -lh "$PATCHED"
-
-          echo "Overlay APK:"
-          ls -lh "$OVERLAY"
-
-          echo "======================================"
           echo "SUCCESS"
-          echo "======================================"
 
           EOF
 
-          chmod 755 root-module/customize.sh
-          chmod 755 root-module/service.sh
+          chmod +x BASE_TEMPLATE/customize.sh
+          chmod +x BASE_TEMPLATE/service.sh
 
-          cd root-module
+          # Magisk-style installer
+          cat > BASE_TEMPLATE/META-INF/com/google/android/update-binary <<'EOF'
+          #!/sbin/sh
+
+          UMASK=022
+
+          ZIPFILE="$3"
+
+          MODULE_ID="youtube-morphe-root"
+
+          MODPATH="/data/adb/modules/${MODULE_ID}"
+
+          mkdir -p "$MODPATH"
+
+          unzip -o \
+            "$ZIPFILE" \
+            -x "META-INF/*" \
+            -d "$MODPATH"
+
+          chmod 0755 \
+            "$MODPATH/customize.sh" \
+            "$MODPATH/service.sh"
+
+          chmod 0644 \
+            "$MODPATH/module.prop" \
+            "$MODPATH/base.apk" \
+            "$MODPATH/stock/base.apk"
+          EOF
+
+          chmod +x \
+            BASE_TEMPLATE/META-INF/com/google/android/update-binary
+
+          # updater-script
+          echo "# MAGISK INSTALLER" \
+            > BASE_TEMPLATE/META-INF/com/google/android/updater-script
+
+          # ------------------------------------------------
+          # 7-ZIP
+          # SAME METHOD AS build_module(2).sh
+          # ------------------------------------------------
+
+          cd BASE_TEMPLATE
 
           7z a \
             -tzip \
             -mx=9 \
+            -mm=Deflate \
             -mfb=258 \
-            -mpass=15 \
-            "../youtube-morphe-root-${VERSION}.zip" \
-            .
+            "../${ZIP_OUT}" \
+            ./*
 
           cd ..
 
-          test -f "youtube-morphe-root-${VERSION}.zip"
+          test -f "${ZIP_OUT}"
 
-          echo "Stable root module:"
-          ls -lh "youtube-morphe-root-${VERSION}.zip"
+          echo "======================================"
+          echo "STABLE ROOT ZIP"
+          echo "======================================"
 
-          7z l "youtube-morphe-root-${VERSION}.zip"
+          ls -lh "${ZIP_OUT}"
+
+          7z l "${ZIP_OUT}"
 
       - name: Upload Stable
         uses: actions/upload-artifact@v4
@@ -384,6 +388,7 @@ jobs:
 
 
   dev:
+
     name: Dev
     runs-on: ubuntu-latest
 
@@ -397,6 +402,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+
+      - name: Install tools
+        shell: bash
+        run: |
+          set -e
+
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full zipalign apksigner
 
       - name: Read dev version
         shell: bash
@@ -412,6 +425,8 @@ jobs:
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
+          echo "Dev: $VERSION"
+
       - name: Download YouTube
         shell: bash
         run: |
@@ -421,19 +436,14 @@ jobs:
 
           node scripts/download_youtube.js "$VERSION"
 
-      - name: Find YouTube
+      - name: Find YouTube APK
         shell: bash
         run: |
           set -e
 
           INPUT="$(
             find . -maxdepth 3 -type f \
-              \( \
-                -name "*.apk" \
-                -o -name "*.apkm" \
-                -o -name "*.xapk" \
-                -o -name "*.apks" \
-              \) |
+              -name "*.apk" |
             head -n 1
           )"
 
@@ -444,7 +454,7 @@ jobs:
 
           echo "INPUT=$INPUT" >> "$GITHUB_ENV"
 
-      - name: Download Morphe
+      - name: Download Morphe CLI
         shell: bash
         run: |
           set -e
@@ -467,10 +477,7 @@ jobs:
             head -n 1
           )"
 
-          if [ -z "$URL" ]; then
-            echo "ERROR: Morphe CLI not found"
-            exit 1
-          fi
+          test -n "$URL"
 
           curl -fL \
             --retry 3 \
@@ -480,6 +487,10 @@ jobs:
             -o morphe-cli.jar
 
           test -s morphe-cli.jar
+
+      # -------------------------------------------------
+      # DEV NON ROOT
+      # -------------------------------------------------
 
       - name: Patch Dev Non Root
         shell: bash
@@ -497,6 +508,10 @@ jobs:
 
           test -f "youtube-morphe-dev-${VERSION}.apk"
 
+      # -------------------------------------------------
+      # DEV ROOT
+      # -------------------------------------------------
+
       - name: Patch Dev Root
         shell: bash
         run: |
@@ -509,182 +524,203 @@ jobs:
             --prerelease \
             --disable "GmsCore support" \
             --disable "Custom branding" \
-            -o "youtube-morphe-dev-root-apk-${VERSION}.apk" \
+            -o "youtube-root-dev-${VERSION}.apk" \
             "$INPUT"
 
-          test -f "youtube-morphe-dev-root-apk-${VERSION}.apk"
+          test -f "youtube-root-dev-${VERSION}.apk"
 
-      - name: Create Dev Magisk Module
+      # -------------------------------------------------
+      # CREATE DEV ROOT
+      # -------------------------------------------------
+
+      - name: Create Dev Magisk Root
         shell: bash
         run: |
           set -e
 
-          sudo apt-get update
-          sudo apt-get install -y p7zip-full
+          MODULE_ID="youtube-morphe-dev-root"
+          MODULE_NAME="YouTube Morphe Dev Root"
+          ZIP_OUT="youtube-morphe-dev-root-${VERSION}.zip"
 
-          rm -rf root-module
+          rm -rf BASE_TEMPLATE
 
-          mkdir -p root-module/stock
-          mkdir -p root-module/patched
-          mkdir -p root-module/system
+          mkdir -p \
+            BASE_TEMPLATE/META-INF/com/google/android \
+            BASE_TEMPLATE/stock
 
-          cp "$INPUT" \
-            root-module/stock/YouTube.apk
+          cp -f \
+            youtube-root-dev-${VERSION}.apk \
+            BASE_TEMPLATE/base.apk
 
-          cp "youtube-morphe-dev-root-apk-${VERSION}.apk" \
-            root-module/patched/YouTube.apk
+          cp -f \
+            "$INPUT" \
+            BASE_TEMPLATE/stock/base.apk
 
-          cat > root-module/module.prop <<EOF
-          id=youtube_morphe_dev
-          name=YouTube Morphe Dev Root
+          cat > BASE_TEMPLATE/module.prop <<EOF
+          id=${MODULE_ID}
+          name=${MODULE_NAME}
           version=${VERSION}
-          versionCode=${VERSION}
+          versionCode=$(date +%Y%m%d)
           author=Chuong
-          description=YouTube Morphe Dev Magisk Module
+          description=${MODULE_NAME} with Stock APK and patched APK
           EOF
 
-          cat > root-module/customize.sh <<'EOF'
+          cat > BASE_TEMPLATE/customize.sh <<'EOF'
           #!/system/bin/sh
 
           ui_print "======================================"
           ui_print " YouTube Morphe Dev Root"
           ui_print "======================================"
-          ui_print "Stock APK included"
-          ui_print "Patched APK included"
-          ui_print "GmsCore support: Disabled"
-          ui_print "Custom branding: Disabled"
+
+          ui_print "- Stock APK included"
+          ui_print "- Patched APK included"
+          ui_print "- GmsCore support: Disabled"
+          ui_print "- Custom branding: Disabled"
+
+          PKG_NAME="com.google.android.youtube"
+
+          TARGET_APK="$(pm path "$PKG_NAME" 2>/dev/null | head -n 1 | cut -d':' -f2)"
+
+          if [ -z "$TARGET_APK" ]; then
+
+              if [ -f "$MODPATH/stock/base.apk" ]; then
+
+                  ui_print "- Installing stock YouTube..."
+
+                  pm install -r \
+                    "$MODPATH/stock/base.apk" \
+                    >/dev/null 2>&1 || true
+
+              fi
+
+          else
+
+              ui_print "- Stock YouTube found:"
+              ui_print "  $TARGET_APK"
+
+          fi
+
+          set_perm_recursive \
+            "$MODPATH" \
+            0 \
+            0 \
+            0755 \
+            0644
+
+          chmod 0755 "$MODPATH/customize.sh"
+          chmod 0755 "$MODPATH/service.sh"
+
           ui_print "======================================"
           EOF
 
-          cat > root-module/service.sh <<'EOF'
+          cat > BASE_TEMPLATE/service.sh <<'EOF'
           #!/system/bin/sh
 
           MODDIR="${0%/*}"
 
-          STOCK="$MODDIR/stock/YouTube.apk"
-          PATCHED="$MODDIR/patched/YouTube.apk"
+          PKG_NAME="com.google.android.youtube"
 
-          PKG="com.google.android.youtube"
-
-          LOG="/data/adb/youtube_morphe_dev.log"
+          LOG="/data/adb/youtube_morphe_dev_root.log"
 
           exec >>"$LOG" 2>&1
 
           echo "YouTube Morphe Dev Root"
 
-          if [ ! -f "$STOCK" ]; then
-              echo "ERROR: Stock APK missing"
-              exit 1
-          fi
-
-          if [ ! -f "$PATCHED" ]; then
-              echo "ERROR: Patched APK missing"
-              exit 1
-          fi
-
-          until [ "$(getprop sys.boot_completed)" = "1" ]; do
-              sleep 2
+          while [ "$(getprop sys.boot_completed)" != "1" ]; do
+              sleep 3
           done
 
           sleep 5
 
-          PATHS="$(
-              pm path "$PKG" 2>/dev/null |
-              sed 's/^package://'
+          TARGET_APK="$(
+              pm path "$PKG_NAME" 2>/dev/null |
+              head -n 1 |
+              cut -d':' -f2
           )"
 
-          if [ -z "$PATHS" ]; then
+          if [ -z "$TARGET_APK" ]; then
               echo "ERROR: YouTube package not found"
               exit 1
           fi
 
-          TARGET=""
+          echo "Target: $TARGET_APK"
 
-          while IFS= read -r APK_PATH; do
+          mount -o bind \
+              "$MODDIR/base.apk" \
+              "$TARGET_APK"
 
-              [ -z "$APK_PATH" ] && continue
+          RESULT=$?
 
-              case "$APK_PATH" in
-                  /system/*)
-                      TARGET="$APK_PATH"
-                      break
-                      ;;
-                  /product/*)
-                      TARGET="$APK_PATH"
-                      break
-                      ;;
-                  /system_ext/*)
-                      TARGET="$APK_PATH"
-                      break
-                      ;;
-                  /vendor/*)
-                      TARGET="$APK_PATH"
-                      break
-                      ;;
-              esac
-
-          done <<EOF_PATHS
-          $PATHS
-          EOF_PATHS
-
-          if [ -z "$TARGET" ]; then
-              echo "ERROR: System YouTube APK not found"
+          if [ "$RESULT" -ne 0 ]; then
+              echo "ERROR: Mount failed"
               exit 1
           fi
 
-          case "$TARGET" in
-              /system/*)
-                  RELATIVE="${TARGET#/system/}"
-                  OVERLAY="$MODDIR/system/$RELATIVE"
-                  ;;
-              /product/*)
-                  RELATIVE="${TARGET#/product/}"
-                  OVERLAY="$MODDIR/product/$RELATIVE"
-                  ;;
-              /system_ext/*)
-                  RELATIVE="${TARGET#/system_ext/}"
-                  OVERLAY="$MODDIR/system_ext/$RELATIVE"
-                  ;;
-              /vendor/*)
-                  RELATIVE="${TARGET#/vendor/}"
-                  OVERLAY="$MODDIR/vendor/$RELATIVE"
-                  ;;
-              *)
-                  echo "ERROR: Unsupported path"
-                  exit 1
-                  ;;
-          esac
-
-          mkdir -p "$(dirname "$OVERLAY")"
-
-          cp "$PATCHED" "$OVERLAY"
-
-          chmod 0644 "$OVERLAY"
-
-          echo "Overlay prepared:"
-          echo "$OVERLAY"
+          am force-stop \
+              "$PKG_NAME" \
+              >/dev/null 2>&1 || true
 
           echo "SUCCESS"
           EOF
 
-          chmod 755 root-module/customize.sh
-          chmod 755 root-module/service.sh
+          chmod +x BASE_TEMPLATE/customize.sh
+          chmod +x BASE_TEMPLATE/service.sh
 
-          cd root-module
+          cat > BASE_TEMPLATE/META-INF/com/google/android/update-binary <<'EOF'
+          #!/sbin/sh
+
+          UMASK=022
+
+          ZIPFILE="$3"
+
+          MODULE_ID="youtube-morphe-dev-root"
+
+          MODPATH="/data/adb/modules/${MODULE_ID}"
+
+          mkdir -p "$MODPATH"
+
+          unzip -o \
+            "$ZIPFILE" \
+            -x "META-INF/*" \
+            -d "$MODPATH"
+
+          chmod 0755 \
+            "$MODPATH/customize.sh" \
+            "$MODPATH/service.sh"
+
+          chmod 0644 \
+            "$MODPATH/module.prop" \
+            "$MODPATH/base.apk" \
+            "$MODPATH/stock/base.apk"
+          EOF
+
+          chmod +x \
+            BASE_TEMPLATE/META-INF/com/google/android/update-binary
+
+          echo "# MAGISK INSTALLER" \
+            > BASE_TEMPLATE/META-INF/com/google/android/updater-script
+
+          cd BASE_TEMPLATE
 
           7z a \
             -tzip \
             -mx=9 \
+            -mm=Deflate \
             -mfb=258 \
-            -mpass=15 \
-            "../youtube-morphe-dev-root-${VERSION}.zip" \
-            .
+            "../${ZIP_OUT}" \
+            ./*
 
           cd ..
 
-          test -f "youtube-morphe-dev-root-${VERSION}.zip"
+          test -f "${ZIP_OUT}"
 
-          7z l "youtube-morphe-dev-root-${VERSION}.zip"
+          echo "======================================"
+          echo "DEV ROOT ZIP"
+          echo "======================================"
+
+          ls -lh "${ZIP_OUT}"
+
+          7z l "${ZIP_OUT}"
 
       - name: Upload Dev
         uses: actions/upload-artifact@v4
@@ -697,10 +733,13 @@ jobs:
 
 
   release:
+
     name: Common Release
+
     needs:
       - main
       - dev
+
     runs-on: ubuntu-latest
 
     steps:
@@ -728,16 +767,14 @@ jobs:
           MAIN_APK="$(
             find release \
               -maxdepth 1 \
-              -name "youtube-morphe-*.apk" \
-              ! -name "youtube-morphe-root-apk-*" |
+              -name "youtube-morphe-*.apk" |
             head -n 1
           )"
 
           DEV_APK="$(
             find release \
               -maxdepth 1 \
-              -name "youtube-morphe-dev-*.apk" \
-              ! -name "youtube-morphe-dev-root-apk-*" |
+              -name "youtube-morphe-dev-*.apk" |
             head -n 1
           )"
 
@@ -746,14 +783,14 @@ jobs:
 
           MAIN_VERSION="$(
             basename "$MAIN_APK" |
-            sed "s/^youtube-morphe-//" |
-            sed "s/\.apk$//"
+            sed 's/^youtube-morphe-//' |
+            sed 's/\.apk$//'
           )"
 
           DEV_VERSION="$(
             basename "$DEV_APK" |
-            sed "s/^youtube-morphe-dev-//" |
-            sed "s/\.apk$//"
+            sed 's/^youtube-morphe-dev-//' |
+            sed 's/\.apk$//'
           )"
 
           echo "MAIN_VERSION=$MAIN_VERSION" >> "$GITHUB_ENV"
@@ -769,8 +806,13 @@ jobs:
           TAG="youtube-morphe"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release already exists"
+
+            echo "Release exists"
+
           else
+
+            echo "Creating release"
+
             gh release create "$TAG" \
               --title "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
               --notes "YouTube Morphe
@@ -779,19 +821,17 @@ jobs:
                 Dev: ${DEV_VERSION}
                 
                 Non-root:
-                Custom branding disabled
-                GmsCore support enabled
+                - Custom branding disabled
+                - GmsCore support enabled
                 
                 Root:
-                Custom branding disabled
-                GmsCore support disabled
-                
-                Root module:
-                Stock APK included
-                Patched APK included
-                Automatic YouTube path detection
-                Magisk overlay
-                7-Zip compression"
+                - GmsCore support disabled
+                - Custom branding disabled
+                - Stock APK included
+                - Patched APK included
+                - META-INF included
+                - 7-Zip Deflate compression"
+
           fi
 
           gh release edit "$TAG" \
