@@ -15,28 +15,79 @@ permissions:
 
 jobs:
 
+  # ==================================================
+  # MAIN
+  # ==================================================
+
   main:
+
     if: github.ref == 'refs/heads/main'
+
     runs-on: ubuntu-latest
 
     steps:
+
+      # ==================================================
+      # CHECKOUT
+      # ==================================================
+
       - name: Checkout
         uses: actions/checkout@v4
+
+
+      # ==================================================
+      # JAVA 21
+      # ==================================================
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
+
+
+      # ==================================================
+      # CHECK JAVA
+      # ==================================================
+
+      - name: Check Java
+        shell: bash
+        run: |
+          set -e
+          java -version
+
+
+      # ==================================================
+      # READ MAIN VERSION
+      # ==================================================
 
       - name: Read main version
         shell: bash
         run: |
           set -e
+
+          if [ ! -f "version.txt" ]; then
+            echo "ERROR: Không tìm thấy version.txt"
+            exit 1
+          fi
+
           VERSION="$(tr -d '\r\n' < version.txt | xargs)"
-          test -n "$VERSION"
+
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: version.txt rỗng"
+            exit 1
+          fi
+
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          echo "======================================"
           echo "MAIN VERSION: $VERSION"
+          echo "======================================"
+
+
+      # ==================================================
+      # DOWNLOAD YOUTUBE FROM APKMIRROR
+      # ==================================================
 
       - name: Download YouTube from APKMirror
         shell: bash
@@ -44,98 +95,327 @@ jobs:
           VERSION: ${{ env.VERSION }}
         run: |
           set -e
+
+          if [ ! -f "scripts/download_youtube.js" ]; then
+            echo "ERROR: Không tìm thấy scripts/download_youtube.js"
+            exit 1
+          fi
+
           node scripts/download_youtube.js
+
+
+      # ==================================================
+      # CHECK YOUTUBE APK
+      # ==================================================
+
+      - name: Check YouTube APK
+        shell: bash
+        env:
+          VERSION: ${{ env.VERSION }}
+        run: |
+          set -e
+
+          APK="com.google.android.youtube-${VERSION}-all.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: Không tìm thấy:"
+            echo "$APK"
+            exit 1
+          fi
+
+          ls -lh "$APK"
+
+
+      # ==================================================
+      # DOWNLOAD MORPHE CLI
+      # ==================================================
 
       - name: Download Morphe CLI
         shell: bash
         run: |
           set -e
+
           API="https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
-          URL="$(curl -fsSL "$API" |
-            grep -o 'https://[^"]*morphe-desktop-[^"]*-all\.jar' |
-            head -n 1)"
-          test -n "$URL"
-          wget -q --show-progress "$URL" -O morphe-cli.jar
-          test -s morphe-cli.jar
+
+          URL="$(
+            curl -fsSL "$API" |
+            grep -o \
+              'https://[^"]*morphe-desktop-[^"]*-all\.jar' |
+            head -n 1
+          )"
+
+          if [ -z "$URL" ]; then
+            echo "ERROR: Không tìm thấy Morphe CLI"
+            exit 1
+          fi
+
+          echo "Morphe CLI:"
+          echo "$URL"
+
+          wget \
+            -q \
+            --show-progress \
+            "$URL" \
+            -O morphe-cli.jar
+
+          if [ ! -s "morphe-cli.jar" ]; then
+            echo "ERROR: Morphe CLI download failed"
+            exit 1
+          fi
+
+          ls -lh morphe-cli.jar
+
+
+      # ==================================================
+      # CHECK MORPHE
+      # ==================================================
+
+      - name: Check Morphe CLI
+        shell: bash
+        run: |
+          set -e
+
+          java \
+            -jar morphe-cli.jar \
+            --help
+
+
+      # ==================================================
+      # CLONE MORPHE PATCHES MAIN
+      # ==================================================
 
       - name: Clone Morphe patches main
+        shell: bash
         run: |
-          git clone --depth 1 --branch main \
+          set -e
+
+          rm -rf morphe-patches
+
+          git clone \
+            --depth 1 \
+            --branch main \
             https://github.com/MorpheApp/morphe-patches.git \
             morphe-patches
 
+          echo "Morphe patches:"
+          ls -la morphe-patches
+
+
+      # ==================================================
+      # PATCH YOUTUBE
+      # ==================================================
+
       - name: Patch YouTube
+        shell: bash
         env:
           VERSION: ${{ env.VERSION }}
         run: |
           set -e
+
           APK="com.google.android.youtube-${VERSION}-all.apk"
-          java -jar morphe-cli.jar patch \
+
+          echo "======================================"
+          echo "PATCH YOUTUBE"
+          echo "VERSION: $VERSION"
+          echo "======================================"
+
+          java \
+            -jar morphe-cli.jar \
+            patch \
             "$APK" \
             --patches morphe-patches
 
+
+      # ==================================================
+      # FIND PATCHED APK
+      # ==================================================
+
       - name: Find patched APK
+        shell: bash
         run: |
-          find . -type f -name "*.apk" -printf '%p %s bytes\n'
+          set -e
+
+          echo "APK files:"
+
+          find . \
+            -type f \
+            -name "*.apk" \
+            -printf '%p %s bytes\n'
+
+
+      # ==================================================
+      # RENAME PATCHED APK
+      # ==================================================
 
       - name: Rename patched APK
+        shell: bash
         env:
           VERSION: ${{ env.VERSION }}
         run: |
           set -e
+
+          ORIGINAL="com.google.android.youtube-${VERSION}-all.apk"
+
           SOURCE="$(
-            find . -type f -name "*.apk" |
-            grep -v "com.google.android.youtube-${VERSION}-all.apk" |
+            find . \
+              -type f \
+              -name "*.apk" |
+            grep -v \
+              "$ORIGINAL" |
             head -n 1
           )"
-          test -n "$SOURCE"
-          cp "$SOURCE" "youtube-morphe-${VERSION}.apk"
 
-      - name: SHA256
+          if [ -z "$SOURCE" ]; then
+            echo "ERROR: Không tìm thấy patched APK"
+            exit 1
+          fi
+
+          OUTPUT="youtube-morphe-${VERSION}.apk"
+
+          cp \
+            "$SOURCE" \
+            "$OUTPUT"
+
+          ls -lh "$OUTPUT"
+
+
+      # ==================================================
+      # SHA256
+      # ==================================================
+
+      - name: Generate SHA256
+        shell: bash
         env:
           VERSION: ${{ env.VERSION }}
         run: |
-          sha256sum "youtube-morphe-${VERSION}.apk" \
-            > "youtube-morphe-${VERSION}.apk.sha256"
+          set -e
+
+          APK="youtube-morphe-${VERSION}.apk"
+
+          sha256sum \
+            "$APK" \
+            > "${APK}.sha256"
+
+          cat "${APK}.sha256"
+
+
+      # ==================================================
+      # CREATE MAIN RELEASE
+      # ==================================================
 
       - name: Create main release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ env.VERSION }}
         run: |
           set -e
+
           TAG="morphe-${VERSION}"
+
+          APK="youtube-morphe-${VERSION}.apk"
+
+          SHA="${APK}.sha256"
+
+
+          echo "======================================"
+          echo "CREATE RELEASE"
+          echo "TAG: $TAG"
+          echo "======================================"
+
+
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release delete "$TAG" --yes
+
+            echo "Deleting old release..."
+
+            gh release delete \
+              "$TAG" \
+              --yes
+
           fi
-          gh release create "$TAG" \
-            "youtube-morphe-${VERSION}.apk" \
-            "youtube-morphe-${VERSION}.apk.sha256" \
+
+
+          gh release create \
+            "$TAG" \
+            "$APK" \
+            "$SHA" \
             --title "YouTube Morphe ${VERSION}" \
             --notes "YouTube ${VERSION} patched with MorpheApp patches main."
 
+
+  # ==================================================
+  # DEV
+  # ==================================================
+
   dev:
+
     if: github.ref == 'refs/heads/dev'
+
     runs-on: ubuntu-latest
 
     steps:
+
+      # ==================================================
+      # CHECKOUT
+      # ==================================================
+
       - name: Checkout
         uses: actions/checkout@v4
+
+
+      # ==================================================
+      # JAVA 21
+      # ==================================================
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
+
+
+      # ==================================================
+      # CHECK JAVA
+      # ==================================================
+
+      - name: Check Java
+        shell: bash
+        run: |
+          set -e
+          java -version
+
+
+      # ==================================================
+      # READ DEV VERSION
+      # ==================================================
 
       - name: Read dev version
         shell: bash
         run: |
           set -e
+
+          if [ ! -f "version_dev.txt" ]; then
+            echo "ERROR: Không tìm thấy version_dev.txt"
+            exit 1
+          fi
+
           VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
-          test -n "$VERSION"
+
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: version_dev.txt rỗng"
+            exit 1
+          fi
+
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          echo "======================================"
           echo "DEV VERSION: $VERSION"
+          echo "======================================"
+
+
+      # ==================================================
+      # DOWNLOAD YOUTUBE FROM APKMIRROR
+      # ==================================================
 
       - name: Download YouTube from APKMirror
         shell: bash
@@ -143,73 +423,248 @@ jobs:
           VERSION: ${{ env.VERSION }}
         run: |
           set -e
+
+          if [ ! -f "scripts/download_youtube.js" ]; then
+            echo "ERROR: Không tìm thấy scripts/download_youtube.js"
+            exit 1
+          fi
+
           node scripts/download_youtube.js
+
+
+      # ==================================================
+      # CHECK YOUTUBE APK
+      # ==================================================
+
+      - name: Check YouTube APK
+        shell: bash
+        env:
+          VERSION: ${{ env.VERSION }}
+        run: |
+          set -e
+
+          APK="com.google.android.youtube-${VERSION}-all.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: Không tìm thấy:"
+            echo "$APK"
+            exit 1
+          fi
+
+          ls -lh "$APK"
+
+
+      # ==================================================
+      # DOWNLOAD MORPHE CLI
+      # ==================================================
 
       - name: Download Morphe CLI
         shell: bash
         run: |
           set -e
+
           API="https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
-          URL="$(curl -fsSL "$API" |
-            grep -o 'https://[^"]*morphe-desktop-[^"]*-all\.jar' |
-            head -n 1)"
-          test -n "$URL"
-          wget -q --show-progress "$URL" -O morphe-cli.jar
-          test -s morphe-cli.jar
+
+          URL="$(
+            curl -fsSL "$API" |
+            grep -o \
+              'https://[^"]*morphe-desktop-[^"]*-all\.jar' |
+            head -n 1
+          )"
+
+          if [ -z "$URL" ]; then
+            echo "ERROR: Không tìm thấy Morphe CLI"
+            exit 1
+          fi
+
+          echo "Morphe CLI:"
+          echo "$URL"
+
+          wget \
+            -q \
+            --show-progress \
+            "$URL" \
+            -O morphe-cli.jar
+
+          if [ ! -s "morphe-cli.jar" ]; then
+            echo "ERROR: Morphe CLI download failed"
+            exit 1
+          fi
+
+          ls -lh morphe-cli.jar
+
+
+      # ==================================================
+      # CHECK MORPHE
+      # ==================================================
+
+      - name: Check Morphe CLI
+        shell: bash
+        run: |
+          set -e
+
+          java \
+            -jar morphe-cli.jar \
+            --help
+
+
+      # ==================================================
+      # CLONE MORPHE PATCHES DEV
+      # ==================================================
 
       - name: Clone Morphe patches dev
+        shell: bash
         run: |
-          git clone --depth 1 --branch dev \
+          set -e
+
+          rm -rf morphe-patches
+
+          git clone \
+            --depth 1 \
+            --branch dev \
             https://github.com/MorpheApp/morphe-patches.git \
             morphe-patches
 
+          echo "Morphe patches:"
+          ls -la morphe-patches
+
+
+      # ==================================================
+      # PATCH YOUTUBE DEV
+      # ==================================================
+
       - name: Patch YouTube DEV
+        shell: bash
         env:
           VERSION: ${{ env.VERSION }}
         run: |
           set -e
+
           APK="com.google.android.youtube-${VERSION}-all.apk"
-          java -jar morphe-cli.jar patch \
+
+          echo "======================================"
+          echo "PATCH YOUTUBE DEV"
+          echo "VERSION: $VERSION"
+          echo "======================================"
+
+          java \
+            -jar morphe-cli.jar \
+            patch \
             "$APK" \
             --patches morphe-patches
 
+
+      # ==================================================
+      # FIND PATCHED APK
+      # ==================================================
+
       - name: Find patched APK
+        shell: bash
         run: |
-          find . -type f -name "*.apk" -printf '%p %s bytes\n'
+          set -e
+
+          find . \
+            -type f \
+            -name "*.apk" \
+            -printf '%p %s bytes\n'
+
+
+      # ==================================================
+      # RENAME PATCHED APK
+      # ==================================================
 
       - name: Rename patched APK
+        shell: bash
         env:
           VERSION: ${{ env.VERSION }}
         run: |
           set -e
+
+          ORIGINAL="com.google.android.youtube-${VERSION}-all.apk"
+
           SOURCE="$(
-            find . -type f -name "*.apk" |
-            grep -v "com.google.android.youtube-${VERSION}-all.apk" |
+            find . \
+              -type f \
+              -name "*.apk" |
+            grep -v \
+              "$ORIGINAL" |
             head -n 1
           )"
-          test -n "$SOURCE"
-          cp "$SOURCE" "youtube-morphe-dev-${VERSION}.apk"
 
-      - name: SHA256
+          if [ -z "$SOURCE" ]; then
+            echo "ERROR: Không tìm thấy patched APK"
+            exit 1
+          fi
+
+          OUTPUT="youtube-morphe-dev-${VERSION}.apk"
+
+          cp \
+            "$SOURCE" \
+            "$OUTPUT"
+
+          ls -lh "$OUTPUT"
+
+
+      # ==================================================
+      # SHA256
+      # ==================================================
+
+      - name: Generate SHA256
+        shell: bash
         env:
           VERSION: ${{ env.VERSION }}
         run: |
-          sha256sum "youtube-morphe-dev-${VERSION}.apk" \
-            > "youtube-morphe-dev-${VERSION}.apk.sha256"
+          set -e
+
+          APK="youtube-morphe-dev-${VERSION}.apk"
+
+          sha256sum \
+            "$APK" \
+            > "${APK}.sha256"
+
+          cat "${APK}.sha256"
+
+
+      # ==================================================
+      # CREATE DEV RELEASE
+      # ==================================================
 
       - name: Create dev release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ env.VERSION }}
         run: |
           set -e
+
           TAG="morphe-dev-${VERSION}"
+
+          APK="youtube-morphe-dev-${VERSION}.apk"
+
+          SHA="${APK}.sha256"
+
+
+          echo "======================================"
+          echo "CREATE DEV RELEASE"
+          echo "TAG: $TAG"
+          echo "======================================"
+
+
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release delete "$TAG" --yes
+
+            echo "Deleting old release..."
+
+            gh release delete \
+              "$TAG" \
+              --yes
+
           fi
-          gh release create "$TAG" \
-            "youtube-morphe-dev-${VERSION}.apk" \
-            "youtube-morphe-dev-${VERSION}.apk.sha256" \
+
+
+          gh release create \
+            "$TAG" \
+            "$APK" \
+            "$SHA" \
             --title "YouTube Morphe DEV ${VERSION}" \
             --prerelease \
             --notes "YouTube ${VERSION} patched with MorpheApp patches dev."
