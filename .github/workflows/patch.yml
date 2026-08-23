@@ -10,8 +10,15 @@ on:
       - ".github/workflows/patch.yml"
       - "scripts/download_youtube.js"
 
+  schedule:
+    # 23:00 Vietnam time (UTC+7)
+    # = 16:00 UTC
+    - cron: "0 16 * * *"
+
+
 permissions:
   contents: write
+
 
 jobs:
 
@@ -21,18 +28,18 @@ jobs:
 
   main:
 
-    if: github.ref == 'refs/heads/main'
-
     runs-on: ubuntu-latest
 
     steps:
 
       # ==================================================
-      # CHECKOUT
+      # CHECKOUT MAIN
       # ==================================================
 
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v4
+        with:
+          ref: main
 
 
       # ==================================================
@@ -68,14 +75,14 @@ jobs:
           set -e
 
           if [ ! -f "version.txt" ]; then
-            echo "ERROR: Không tìm thấy version.txt"
+            echo "ERROR: version.txt not found"
             exit 1
           fi
 
           VERSION="$(tr -d '\r\n' < version.txt | xargs)"
 
           if [ -z "$VERSION" ]; then
-            echo "ERROR: version.txt rỗng"
+            echo "ERROR: version.txt is empty"
             exit 1
           fi
 
@@ -87,7 +94,7 @@ jobs:
 
 
       # ==================================================
-      # DOWNLOAD YOUTUBE APK
+      # DOWNLOAD YOUTUBE
       # ==================================================
 
       - name: Download YouTube from APKMirror
@@ -98,7 +105,7 @@ jobs:
           set -e
 
           if [ ! -f "scripts/download_youtube.js" ]; then
-            echo "ERROR: Không tìm thấy scripts/download_youtube.js"
+            echo "ERROR: scripts/download_youtube.js not found"
             exit 1
           fi
 
@@ -106,7 +113,7 @@ jobs:
 
 
       # ==================================================
-      # CHECK YOUTUBE APK
+      # CHECK APK
       # ==================================================
 
       - name: Check YouTube APK
@@ -119,12 +126,11 @@ jobs:
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: Không tìm thấy APK:"
+            echo "ERROR: APK not found:"
             echo "$APK"
             exit 1
           fi
 
-          echo "YouTube APK:"
           ls -lh "$APK"
 
 
@@ -147,7 +153,7 @@ jobs:
           )"
 
           if [ -z "$URL" ]; then
-            echo "ERROR: Không tìm thấy Morphe CLI"
+            echo "ERROR: Morphe CLI not found"
             exit 1
           fi
 
@@ -169,26 +175,10 @@ jobs:
 
 
       # ==================================================
-      # CHECK MORPHE
-      # ==================================================
-
-      - name: Check Morphe CLI
-        shell: bash
-        run: |
-          set -e
-
-          java \
-            -jar morphe-cli.jar \
-            --version
-
-
-      # ==================================================
       # PATCH MAIN
-      #
-      # Morphe tự tải stable .mpp
       # ==================================================
 
-      - name: Patch YouTube - MAIN
+      - name: Patch YouTube MAIN
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
@@ -198,10 +188,9 @@ jobs:
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
           echo "======================================"
-          echo "MORPHE PATCH MAIN"
+          echo "PATCH MAIN"
           echo "VERSION: $VERSION"
-          echo "PATCH SOURCE:"
-          echo "https://github.com/MorpheApp/morphe-patches"
+          echo "PATCHES: MAIN"
           echo "======================================"
 
           java \
@@ -221,9 +210,7 @@ jobs:
         run: |
           set -e
 
-          echo "======================================"
-          echo "APK FILES"
-          echo "======================================"
+          echo "APK files:"
 
           find . \
             -type f \
@@ -232,10 +219,10 @@ jobs:
 
 
       # ==================================================
-      # RENAME PATCHED APK
+      # RENAME
       # ==================================================
 
-      - name: Rename patched APK
+      - name: Rename main APK
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
@@ -248,23 +235,19 @@ jobs:
             find . \
               -type f \
               -name "*.apk" |
-            grep -v \
-              "$ORIGINAL" |
+            grep -v "$ORIGINAL" |
             head -n 1
           )"
 
           if [ -z "$SOURCE" ]; then
-            echo "ERROR: Không tìm thấy patched APK"
+            echo "ERROR: Patched APK not found"
             exit 1
           fi
 
           OUTPUT="youtube-morphe-${VERSION}.apk"
 
-          cp \
-            "$SOURCE" \
-            "$OUTPUT"
+          cp "$SOURCE" "$OUTPUT"
 
-          echo "Patched APK:"
           ls -lh "$OUTPUT"
 
 
@@ -272,7 +255,7 @@ jobs:
       # SHA256
       # ==================================================
 
-      - name: Generate SHA256
+      - name: Generate main SHA256
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
@@ -289,48 +272,17 @@ jobs:
 
 
       # ==================================================
-      # CREATE RELEASE
+      # UPLOAD MAIN ARTIFACT
       # ==================================================
 
-      - name: Create MAIN Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ env.VERSION }}
-        run: |
-          set -e
-
-          TAG="morphe-${VERSION}"
-
-          APK="youtube-morphe-${VERSION}.apk"
-
-          SHA="${APK}.sha256"
-
-          echo "======================================"
-          echo "CREATE MAIN RELEASE"
-          echo "TAG: $TAG"
-          echo "======================================"
-
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-
-            echo "Deleting old release..."
-
-            gh release delete \
-              "$TAG" \
-              --yes
-
-          fi
-
-
-          gh release create \
-            "$TAG" \
-            "$APK" \
-            "$SHA" \
-            --title \
-            "YouTube Morphe ${VERSION}" \
-            --notes \
-            "YouTube ${VERSION} patched with MorpheApp patches MAIN."
+      - name: Upload main APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-morphe-main
+          path: |
+            youtube-morphe-${{ env.VERSION }}.apk
+            youtube-morphe-${{ env.VERSION }}.apk.sha256
+          retention-days: 1
 
 
   # ==================================================
@@ -339,18 +291,18 @@ jobs:
 
   dev:
 
-    if: github.ref == 'refs/heads/dev'
-
     runs-on: ubuntu-latest
 
     steps:
 
       # ==================================================
-      # CHECKOUT
+      # CHECKOUT DEV
       # ==================================================
 
-      - name: Checkout
+      - name: Checkout dev
         uses: actions/checkout@v4
+        with:
+          ref: dev
 
 
       # ==================================================
@@ -386,14 +338,14 @@ jobs:
           set -e
 
           if [ ! -f "version_dev.txt" ]; then
-            echo "ERROR: Không tìm thấy version_dev.txt"
+            echo "ERROR: version_dev.txt not found"
             exit 1
           fi
 
           VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
 
           if [ -z "$VERSION" ]; then
-            echo "ERROR: version_dev.txt rỗng"
+            echo "ERROR: version_dev.txt is empty"
             exit 1
           fi
 
@@ -405,7 +357,7 @@ jobs:
 
 
       # ==================================================
-      # DOWNLOAD YOUTUBE APK
+      # DOWNLOAD YOUTUBE
       # ==================================================
 
       - name: Download YouTube from APKMirror
@@ -416,7 +368,7 @@ jobs:
           set -e
 
           if [ ! -f "scripts/download_youtube.js" ]; then
-            echo "ERROR: Không tìm thấy scripts/download_youtube.js"
+            echo "ERROR: scripts/download_youtube.js not found"
             exit 1
           fi
 
@@ -424,7 +376,7 @@ jobs:
 
 
       # ==================================================
-      # CHECK YOUTUBE APK
+      # CHECK APK
       # ==================================================
 
       - name: Check YouTube APK
@@ -437,12 +389,11 @@ jobs:
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: Không tìm thấy APK:"
+            echo "ERROR: APK not found:"
             echo "$APK"
             exit 1
           fi
 
-          echo "YouTube APK:"
           ls -lh "$APK"
 
 
@@ -465,7 +416,7 @@ jobs:
           )"
 
           if [ -z "$URL" ]; then
-            echo "ERROR: Không tìm thấy Morphe CLI"
+            echo "ERROR: Morphe CLI not found"
             exit 1
           fi
 
@@ -487,26 +438,10 @@ jobs:
 
 
       # ==================================================
-      # CHECK MORPHE
-      # ==================================================
-
-      - name: Check Morphe CLI
-        shell: bash
-        run: |
-          set -e
-
-          java \
-            -jar morphe-cli.jar \
-            --version
-
-
-      # ==================================================
       # PATCH DEV
-      #
-      # --prerelease = DEV
       # ==================================================
 
-      - name: Patch YouTube - DEV
+      - name: Patch YouTube DEV
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
@@ -516,11 +451,9 @@ jobs:
           APK="com.google.android.youtube-${VERSION}-all.apk"
 
           echo "======================================"
-          echo "MORPHE PATCH DEV"
+          echo "PATCH DEV"
           echo "VERSION: $VERSION"
-          echo "PATCH SOURCE:"
-          echo "https://github.com/MorpheApp/morphe-patches"
-          echo "MODE: DEV / PRERELEASE"
+          echo "PATCHES: DEV / PRERELEASE"
           echo "======================================"
 
           java \
@@ -541,9 +474,7 @@ jobs:
         run: |
           set -e
 
-          echo "======================================"
-          echo "APK FILES"
-          echo "======================================"
+          echo "APK files:"
 
           find . \
             -type f \
@@ -555,7 +486,7 @@ jobs:
       # RENAME
       # ==================================================
 
-      - name: Rename patched APK
+      - name: Rename dev APK
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
@@ -568,23 +499,19 @@ jobs:
             find . \
               -type f \
               -name "*.apk" |
-            grep -v \
-              "$ORIGINAL" |
+            grep -v "$ORIGINAL" |
             head -n 1
           )"
 
           if [ -z "$SOURCE" ]; then
-            echo "ERROR: Không tìm thấy patched APK"
+            echo "ERROR: Patched DEV APK not found"
             exit 1
           fi
 
           OUTPUT="youtube-morphe-dev-${VERSION}.apk"
 
-          cp \
-            "$SOURCE" \
-            "$OUTPUT"
+          cp "$SOURCE" "$OUTPUT"
 
-          echo "Patched DEV APK:"
           ls -lh "$OUTPUT"
 
 
@@ -592,7 +519,7 @@ jobs:
       # SHA256
       # ==================================================
 
-      - name: Generate SHA256
+      - name: Generate dev SHA256
         shell: bash
         env:
           VERSION: ${{ env.VERSION }}
@@ -609,28 +536,165 @@ jobs:
 
 
       # ==================================================
-      # CREATE DEV RELEASE
+      # UPLOAD DEV ARTIFACT
       # ==================================================
 
-      - name: Create DEV Release
+      - name: Upload dev APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-morphe-dev
+          path: |
+            youtube-morphe-dev-${{ env.VERSION }}.apk
+            youtube-morphe-dev-${{ env.VERSION }}.apk.sha256
+          retention-days: 1
+
+
+  # ==================================================
+  # RELEASE
+  #
+  # MAIN + DEV chạy xong mới chạy job này
+  # ==================================================
+
+  release:
+
+    needs:
+      - main
+      - dev
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ==================================================
+      # DOWNLOAD MAIN ARTIFACT
+      # ==================================================
+
+      - name: Download main artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: youtube-morphe-main
+          path: release
+
+
+      # ==================================================
+      # DOWNLOAD DEV ARTIFACT
+      # ==================================================
+
+      - name: Download dev artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: youtube-morphe-dev
+          path: release
+
+
+      # ==================================================
+      # LIST FILES
+      # ==================================================
+
+      - name: List release files
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ env.VERSION }}
         run: |
           set -e
 
-          TAG="morphe-dev-${VERSION}"
+          echo "======================================"
+          echo "RELEASE FILES"
+          echo "======================================"
 
-          APK="youtube-morphe-dev-${VERSION}.apk"
+          ls -lh release
 
-          SHA="${APK}.sha256"
+
+      # ==================================================
+      # READ VERSIONS
+      # ==================================================
+
+      - name: Read versions
+        shell: bash
+        run: |
+          set -e
+
+          MAIN_VERSION="$(
+            tr -d '\r\n' < <(
+              git show origin/main:version.txt 2>/dev/null ||
+              git show HEAD:version.txt
+            ) |
+            xargs
+          )"
+
+          DEV_VERSION="$(
+            tr -d '\r\n' < <(
+              git show origin/dev:version_dev.txt 2>/dev/null ||
+              echo ""
+            ) |
+            xargs
+          )"
+
+          # Lấy version trực tiếp từ artifact filenames nếu checkout
+          # không có origin branches.
+
+          MAIN_FILE="$(
+            find release \
+              -name 'youtube-morphe-*.apk' |
+            head -n 1
+          )"
+
+          DEV_FILE="$(
+            find release \
+              -name 'youtube-morphe-dev-*.apk' |
+            head -n 1
+          )"
+
+          if [ -z "$MAIN_FILE" ]; then
+            echo "ERROR: Main APK missing"
+            exit 1
+          fi
+
+          if [ -z "$DEV_FILE" ]; then
+            echo "ERROR: Dev APK missing"
+            exit 1
+          fi
+
+          MAIN_VERSION="$(
+            basename "$MAIN_FILE" |
+            sed -E 's/^youtube-morphe-(.*)\.apk$/\1/'
+          )"
+
+          DEV_VERSION="$(
+            basename "$DEV_FILE" |
+            sed -E 's/^youtube-morphe-dev-(.*)\.apk$/\1/'
+          )"
+
+          echo "MAIN_VERSION=$MAIN_VERSION" >> "$GITHUB_ENV"
+          echo "DEV_VERSION=$DEV_VERSION" >> "$GITHUB_ENV"
+
+          echo "MAIN VERSION: $MAIN_VERSION"
+          echo "DEV VERSION: $DEV_VERSION"
+
+
+      # ==================================================
+      # CREATE ONE RELEASE
+      # ==================================================
+
+      - name: Create combined release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          # Dùng tag cố định để MAIN + DEV nằm chung 1 Release
+          TAG="youtube-morphe"
 
           echo "======================================"
-          echo "CREATE DEV RELEASE"
+          echo "CREATE COMBINED RELEASE"
           echo "TAG: $TAG"
+          echo "MAIN: $MAIN_VERSION"
+          echo "DEV:  $DEV_VERSION"
           echo "======================================"
 
+
+          # ------------------------------------------------
+          # DELETE RELEASE CŨ
+          # ------------------------------------------------
 
           if gh release view "$TAG" >/dev/null 2>&1; then
 
@@ -643,12 +707,25 @@ jobs:
           fi
 
 
+          # ------------------------------------------------
+          # CREATE RELEASE
+          # ------------------------------------------------
+
           gh release create \
             "$TAG" \
-            "$APK" \
-            "$SHA" \
+            release/*.apk \
+            release/*.sha256 \
             --title \
-            "YouTube Morphe DEV ${VERSION}" \
-            --prerelease \
+            "YouTube Morphe - Main ${MAIN_VERSION} / Dev ${DEV_VERSION}" \
             --notes \
-            "YouTube ${VERSION} patched with MorpheApp patches DEV."
+"## YouTube Morphe
+
+### Main
+- Version: ${MAIN_VERSION}
+- Patches: Morphe main
+
+### Dev
+- Version: ${DEV_VERSION}
+- Patches: Morphe dev / prerelease
+
+Generated automatically by GitHub Actions at 23:00 Vietnam time."
