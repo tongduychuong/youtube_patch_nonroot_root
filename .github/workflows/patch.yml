@@ -10,7 +10,7 @@ name: YouTube Morphe Patch
         default: true
 
   schedule:
-    # 05:00 Vietnam time (UTC+7) = 22:00 UTC
+    # 05:00 Vietnam time = 22:00 UTC
     - cron: "0 22 * * *"
 
 permissions:
@@ -20,6 +20,7 @@ permissions:
 env:
   MORPHE_REPO: MorpheApp/morphe-patches
   RELEASE_TAG: youtube-morphe
+  MICROG_URL: https://github.com/MorpheApp/MicroG-RE/releases
 
 jobs:
 
@@ -28,14 +29,14 @@ jobs:
   # ==========================================================
 
   stable:
-    name: Stable
+    name: Build Stable
     runs-on: ubuntu-latest
-
-    env:
-      KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
 
     permissions:
       contents: write
+
+    env:
+      KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
 
     steps:
 
@@ -85,10 +86,10 @@ jobs:
           echo "YouTube Stable: $VERSION"
 
       # ======================================================
-      # MORPHE MAIN RELEASE
+      # MORPHE STABLE
       # ======================================================
 
-      - name: Get Morphe main release
+      - name: Get Morphe stable release
         shell: bash
         run: |
           set -e
@@ -108,19 +109,21 @@ jobs:
           )"
 
           if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-            echo "ERROR: Morphe main release not found"
+            echo "ERROR: Morphe stable release not found"
             exit 1
           fi
 
           echo "MORPHE_VERSION=$TAG" >> "$GITHUB_ENV"
 
-          echo "Morphe Main: $TAG"
+          echo "Morphe Stable: $TAG"
 
       # ======================================================
-      # CHECK PATCH VERSION
+      # CHECK PATCH
+      # MANUAL = FORCE BUILD
+      # SCHEDULE = CHECK CHANGELOG
       # ======================================================
 
-      - name: Check stable patch version
+      - name: Check stable patch
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -129,43 +132,40 @@ jobs:
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
 
-            echo "======================================"
-            echo "MANUAL RUN"
-            echo "Force Stable build: YES"
-            echo "======================================"
+            echo "Manual run detected."
+            echo "Force Stable build."
 
             echo "BUILD_STABLE=true" >> "$GITHUB_ENV"
 
             exit 0
-
           fi
 
           BUILD="true"
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          if gh api \
+            "/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            > release.json 2>/dev/null; then
 
-            gh release view "$RELEASE_TAG" \
-              --json body \
-              --jq '.body' \
-              > release_notes.txt
+            jq -r '.body // ""' release.json > release_notes.txt
 
             if grep -Fq \
               "Morphe Patch ${MORPHE_VERSION} Changelog" \
               release_notes.txt; then
 
-              echo "Morphe $MORPHE_VERSION already built"
+              echo "Morphe ${MORPHE_VERSION} already built."
               BUILD="false"
 
             else
 
-              echo "New Stable patch: $MORPHE_VERSION"
+              echo "New Morphe stable patch."
+              echo "Build required."
 
             fi
 
           else
 
-            echo "Release does not exist."
-            echo "Stable will build."
+            echo "Release ${RELEASE_TAG} does not exist."
+            echo "Build required."
 
           fi
 
@@ -180,6 +180,8 @@ jobs:
         shell: bash
         run: |
           set -e
+
+          test -f scripts/download_youtube.js
 
           node scripts/download_youtube.js "$VERSION"
 
@@ -208,7 +210,7 @@ jobs:
 
           echo "INPUT=$INPUT" >> "$GITHUB_ENV"
 
-          echo "Input: $INPUT"
+          echo "APK: $INPUT"
 
       # ======================================================
       # MORPHE CLI
@@ -316,7 +318,7 @@ jobs:
       # ARTIFACT
       # ======================================================
 
-      - name: Upload Stable
+      - name: Upload Stable artifact
         if: env.BUILD_STABLE == 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -332,14 +334,14 @@ jobs:
   # ==========================================================
 
   dev:
-    name: Dev
+    name: Build Dev
     runs-on: ubuntu-latest
-
-    env:
-      KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
 
     permissions:
       contents: write
+
+    env:
+      KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
 
     steps:
 
@@ -389,7 +391,7 @@ jobs:
           echo "YouTube Dev: $VERSION"
 
       # ======================================================
-      # MORPHE DEV RELEASE
+      # MORPHE DEV
       # ======================================================
 
       - name: Get Morphe dev release
@@ -427,10 +429,12 @@ jobs:
           echo "Morphe Dev: $TAG"
 
       # ======================================================
-      # CHECK PATCH VERSION
+      # CHECK PATCH
+      # MANUAL = FORCE BUILD
+      # SCHEDULE = CHECK CHANGELOG
       # ======================================================
 
-      - name: Check dev patch version
+      - name: Check dev patch
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -439,43 +443,40 @@ jobs:
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
 
-            echo "======================================"
-            echo "MANUAL RUN"
-            echo "Force Dev build: YES"
-            echo "======================================"
+            echo "Manual run detected."
+            echo "Force Dev build."
 
             echo "BUILD_DEV=true" >> "$GITHUB_ENV"
 
             exit 0
-
           fi
 
           BUILD="true"
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+          if gh api \
+            "/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            > release.json 2>/dev/null; then
 
-            gh release view "$RELEASE_TAG" \
-              --json body \
-              --jq '.body' \
-              > release_notes.txt
+            jq -r '.body // ""' release.json > release_notes.txt
 
             if grep -Fq \
               "Morphe Patch ${MORPHE_VERSION} Changelog" \
               release_notes.txt; then
 
-              echo "Morphe $MORPHE_VERSION already built"
+              echo "Morphe ${MORPHE_VERSION} already built."
               BUILD="false"
 
             else
 
-              echo "New Dev patch: $MORPHE_VERSION"
+              echo "New Morphe dev patch."
+              echo "Build required."
 
             fi
 
           else
 
-            echo "Release does not exist."
-            echo "Dev will build."
+            echo "Release ${RELEASE_TAG} does not exist."
+            echo "Build required."
 
           fi
 
@@ -490,6 +491,8 @@ jobs:
         shell: bash
         run: |
           set -e
+
+          test -f scripts/download_youtube.js
 
           node scripts/download_youtube.js "$VERSION"
 
@@ -624,7 +627,7 @@ jobs:
       # ARTIFACT
       # ======================================================
 
-      - name: Upload Dev
+      - name: Upload Dev artifact
         if: env.BUILD_DEV == 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -640,7 +643,7 @@ jobs:
   # ==========================================================
 
   release:
-    name: Common Release
+    name: Create Release
 
     needs:
       - stable
@@ -677,7 +680,7 @@ jobs:
           path: release
 
       # ======================================================
-      # READ VERSIONS
+      # VERSIONS
       # ======================================================
 
       - name: Read YouTube versions
@@ -692,7 +695,7 @@ jobs:
           echo "DEV_VERSION=$DEV_VERSION" >> "$GITHUB_ENV"
 
       # ======================================================
-      # MORPHE VERSIONS
+      # GET MORPHE VERSIONS
       # ======================================================
 
       - name: Get current Morphe versions
@@ -737,7 +740,7 @@ jobs:
           echo "MORPHE_DEV_VERSION=$DEV_MORPHE" >> "$GITHUB_ENV"
 
       # ======================================================
-      # CHANGELOG
+      # UPDATE CHANGELOG
       # ======================================================
 
       - name: Update Release changelog
@@ -749,11 +752,19 @@ jobs:
 
           TAG="$RELEASE_TAG"
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          MAIN_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_MAIN_VERSION}"
+          DEV_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_DEV_VERSION}"
 
-            gh release view "$TAG" \
-              --json body \
-              --jq '.body' \
+          # --------------------------------------------------
+          # GET EXISTING CHANGELOG
+          # --------------------------------------------------
+
+          if gh api \
+            "/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            > release.json 2>/dev/null; then
+
+            jq -r '.body // ""' \
+              release.json \
               > release_notes.txt
 
           else
@@ -761,6 +772,10 @@ jobs:
             touch release_notes.txt
 
           fi
+
+          # --------------------------------------------------
+          # REMOVE OLD GENERATED SECTIONS
+          # --------------------------------------------------
 
           python3 - <<'PY'
           from pathlib import Path
@@ -776,8 +791,18 @@ jobs:
               text
           )
 
+          text = re.sub(
+              r'(?ms)^## MicroG.*?(?=^## |\Z)',
+              '',
+              text
+          )
+
           path.write_text(text.strip() + "\n")
           PY
+
+          # --------------------------------------------------
+          # ADD MORPHE + MICROG CHANGELOG
+          # --------------------------------------------------
 
           cat >> release_notes.txt <<EOF
 
@@ -792,14 +817,20 @@ jobs:
 
           **${MORPHE_MAIN_VERSION}**
 
-          [Morphe Patch ${MORPHE_MAIN_VERSION} Changelog](https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_MAIN_VERSION})
+          [Morphe Patch ${MORPHE_MAIN_VERSION} Changelog](${MAIN_URL})
 
           ### Dev
 
           **${MORPHE_DEV_VERSION}**
 
-          [Morphe Patch ${MORPHE_DEV_VERSION} Changelog](https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_DEV_VERSION})
+          [Morphe Patch ${MORPHE_DEV_VERSION} Changelog](${DEV_URL})
 
+          ## MicroG
+
+          MicroG is required for **YouTube Non-root**.
+
+          [Download MicroG from MorpheApp/MicroG-RE](${MICROG_URL})
+          
           EOF
 
       # ======================================================
@@ -815,24 +846,71 @@ jobs:
 
           TAG="$RELEASE_TAG"
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          RELEASE_API="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases"
 
-            gh release edit "$TAG" \
-              --title \
-              "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
-              --notes-file release_notes.txt
+          NOTES_JSON="$(jq -Rs . < release_notes.txt)"
+
+          HTTP_CODE="$(
+            curl \
+              -s \
+              -o release_check.json \
+              -w "%{http_code}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${RELEASE_API}/tags/${TAG}"
+          )"
+
+          if [ "$HTTP_CODE" = "200" ]; then
+
+            RELEASE_ID="$(jq -r '.id' release_check.json)"
+
+            echo "Updating Release ID: $RELEASE_ID"
+
+            curl \
+              -fsSL \
+              -X PATCH \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H "Content-Type: application/json" \
+              "${RELEASE_API}/${RELEASE_ID}" \
+              -d "{
+                \"name\": \"YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}\",
+                \"body\": ${NOTES_JSON}
+              }"
+
+          elif [ "$HTTP_CODE" = "404" ]; then
+
+            echo "Release does not exist."
+            echo "Creating release..."
+
+            curl \
+              -fsSL \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H "Content-Type: application/json" \
+              "${RELEASE_API}" \
+              -d "{
+                \"tag_name\": \"${TAG}\",
+                \"name\": \"YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}\",
+                \"body\": ${NOTES_JSON},
+                \"draft\": false,
+                \"prerelease\": false
+              }"
 
           else
 
-            gh release create "$TAG" \
-              --title \
-              "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
-              --notes-file release_notes.txt
+            echo "ERROR: Cannot check Release."
+            cat release_check.json
+            exit 1
 
           fi
 
       # ======================================================
-      # UPLOAD APK / ZIP
+      # UPLOAD APK / ZIP ONLY
       # ======================================================
 
       - name: Upload Release files
@@ -867,6 +945,10 @@ jobs:
               -print0
           )
 
+      # ======================================================
+      # SUMMARY
+      # ======================================================
+
       - name: Summary
         shell: bash
         run: |
@@ -877,6 +959,7 @@ jobs:
           echo "YouTube Dev    : $DEV_VERSION"
           echo "Morphe Stable  : $MORPHE_MAIN_VERSION"
           echo "Morphe Dev     : $MORPHE_DEV_VERSION"
+          echo "MicroG         : $MICROG_URL"
           echo "Release        : $RELEASE_TAG"
           echo "======================================"
 
@@ -886,7 +969,7 @@ jobs:
   # ==========================================================
 
   cleanup:
-    name: Cleanup Old Releases and Workflows
+    name: Cleanup Releases and Workflows
 
     needs:
       - release
@@ -910,7 +993,7 @@ jobs:
           sudo apt-get install -y jq
 
       # ======================================================
-      # RELEASE + TAG
+      # RELEASE CLEANUP
       # KEEP 3
       # ======================================================
 
@@ -926,52 +1009,110 @@ jobs:
           echo "Keep newest 3"
           echo "======================================"
 
-          gh release list \
-            --limit 100 \
-            --json tagName,publishedAt \
+          curl \
+            -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
             > releases.json
 
-          TOTAL="$(jq 'length' releases.json)"
+          jq '
+            sort_by(.published_at // .created_at)
+            | reverse
+          ' releases.json > releases_sorted.json
+
+          TOTAL="$(jq 'length' releases_sorted.json)"
 
           echo "Total releases: $TOTAL"
 
-          if [ "$TOTAL" -gt 3 ]; then
+          if [ "$TOTAL" -le 3 ]; then
 
-            jq -r '
-              sort_by(.publishedAt)
-              | reverse
-              | .[3:]
-              | .[].tagName
-            ' releases.json |
-            while IFS= read -r TAG; do
-
-              [ -z "$TAG" ] && continue
-
-              echo "Deleting release: $TAG"
-
-              gh release delete \
-                "$TAG" \
-                --yes
-
-              echo "Deleting tag: $TAG"
-
-              gh api \
-                --method DELETE \
-                "/repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" \
-                || true
-
-            done
+            echo "Nothing to delete."
 
           else
 
-            echo "Release count <= 3"
-            echo "Nothing to delete."
+            jq -r '
+              .[3:]
+              | .[]
+              | "\(.id)|\(.tag_name)"
+            ' releases_sorted.json |
+            while IFS='|' read -r RELEASE_ID TAG; do
+
+              [ -z "$RELEASE_ID" ] && continue
+
+              echo "--------------------------------------"
+              echo "Deleting Release"
+              echo "ID: $RELEASE_ID"
+              echo "TAG: $TAG"
+
+              HTTP_CODE="$(
+                curl \
+                  -s \
+                  -o /tmp/release_delete.txt \
+                  -w "%{http_code}" \
+                  -X DELETE \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
+              )"
+
+              if [ "$HTTP_CODE" = "204" ]; then
+
+                echo "Release deleted."
+
+              elif [ "$HTTP_CODE" = "404" ]; then
+
+                echo "Release already deleted."
+
+              else
+
+                echo "ERROR deleting Release: HTTP $HTTP_CODE"
+                cat /tmp/release_delete.txt
+                exit 1
+
+              fi
+
+              # ------------------------------------------------
+              # DELETE TAG
+              # ------------------------------------------------
+
+              TAG_CODE="$(
+                curl \
+                  -s \
+                  -o /tmp/tag_delete.txt \
+                  -w "%{http_code}" \
+                  -X DELETE \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}"
+              )"
+
+              if [ "$TAG_CODE" = "204" ]; then
+
+                echo "Tag deleted."
+
+              elif [ "$TAG_CODE" = "404" ]; then
+
+                echo "Tag already deleted."
+
+              else
+
+                echo "WARNING: Tag deletion HTTP $TAG_CODE"
+                cat /tmp/tag_delete.txt || true
+
+              fi
+
+            done
 
           fi
 
       # ======================================================
-      # WORKFLOW RUNS
+      # WORKFLOW CLEANUP
       # KEEP 3
+      # NO GIT COMMAND
       # ======================================================
 
       - name: Cleanup old workflow runs
@@ -982,14 +1123,17 @@ jobs:
           set -e
 
           echo "======================================"
-          echo "WORKFLOW RUN CLEANUP"
-          echo "Workflow: patch.yml"
+          echo "WORKFLOW CLEANUP"
           echo "Keep newest 3"
           echo "======================================"
 
           WORKFLOW_ID="$(
-            gh api \
-              "/repos/${GITHUB_REPOSITORY}/actions/workflows" |
+            curl \
+              -fsSL \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows?per_page=100" |
             jq -r '
               .workflows[]
               | select(.path == ".github/workflows/patch.yml")
@@ -999,39 +1143,35 @@ jobs:
           )"
 
           if [ -z "$WORKFLOW_ID" ] || [ "$WORKFLOW_ID" = "null" ]; then
-
             echo "ERROR: patch.yml workflow not found"
             exit 1
-
           fi
 
           echo "Workflow ID: $WORKFLOW_ID"
 
-          gh api \
-            --paginate \
-            "/repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs?per_page=100" \
-            > workflow_pages.json
+          curl \
+            -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs?per_page=100" \
+            > workflow_runs_response.json
 
-          jq -s '
-            map(.workflow_runs)
-            | add
-            | unique_by(.id)
+          jq '
+            .workflow_runs
             | sort_by(.created_at)
             | reverse
-          ' workflow_pages.json > workflow_runs.json
+          ' workflow_runs_response.json > workflow_runs.json
 
           TOTAL="$(jq 'length' workflow_runs.json)"
 
-          echo "Total runs: $TOTAL"
+          echo "Total workflow runs: $TOTAL"
 
           if [ "$TOTAL" -le 3 ]; then
 
-            echo "Workflow runs <= 3"
             echo "Nothing to delete."
 
           else
-
-            echo "Deleting $((TOTAL - 3)) old runs..."
 
             jq -r '
               .[3:]
@@ -1041,13 +1181,12 @@ jobs:
 
               [ -z "$RUN_ID" ] && continue
 
-              echo "--------------------------------------"
               echo "Deleting workflow run: $RUN_ID"
 
               HTTP_CODE="$(
                 curl \
                   -s \
-                  -o /tmp/delete_response.txt \
+                  -o /tmp/run_delete.txt \
                   -w "%{http_code}" \
                   -X DELETE \
                   -H "Accept: application/vnd.github+json" \
@@ -1056,22 +1195,29 @@ jobs:
                   "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
               )"
 
-              if [ "$HTTP_CODE" = "204" ]; then
+              case "$HTTP_CODE" in
 
-                echo "Deleted successfully."
+                204)
+                  echo "Workflow run deleted."
+                  ;;
 
-              elif [ "$HTTP_CODE" = "404" ]; then
+                404)
+                  echo "Workflow run already deleted."
+                  ;;
 
-                echo "Already deleted / not found."
+                403)
+                  echo "ERROR: Actions permission denied."
+                  cat /tmp/run_delete.txt
+                  exit 1
+                  ;;
 
-              else
+                *)
+                  echo "ERROR: HTTP $HTTP_CODE"
+                  cat /tmp/run_delete.txt
+                  exit 1
+                  ;;
 
-                echo "ERROR: HTTP $HTTP_CODE"
-                cat /tmp/delete_response.txt
-
-                exit 1
-
-              fi
+              esac
 
             done
 
