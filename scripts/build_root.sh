@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 set -e
 
 VERSION="$1"
@@ -6,7 +7,7 @@ INPUT="$2"
 MODE="$3"
 
 # ============================================================
-# CHECK ARGUMENTS
+# CHECK
 # ============================================================
 
 if [ -z "$VERSION" ]; then
@@ -25,6 +26,11 @@ if [ ! -f "$INPUT" ]; then
     exit 1
 fi
 
+if [ -z "${KEYSTORE_ENCRYPTION_KEY:-}" ]; then
+    echo "ERROR: KEYSTORE_ENCRYPTION_KEY is missing"
+    exit 1
+fi
+
 # ============================================================
 # CONFIG
 # ============================================================
@@ -37,11 +43,11 @@ KEYSTORE="${RUNNER_TEMP:-/tmp}/youtube-release.p12"
 
 KEYSTORE_ENC="$KEY_DIR/keystore.enc"
 
-KEY_ALIAS="${KEY_ALIAS:-youtube}"
+KEY_ALIAS="youtube"
 
-STORE_PASSWORD="${STORE_PASSWORD:-youtube-release}"
+STORE_PASSWORD="youtube-release"
 
-KEY_PASSWORD="${KEY_PASSWORD:-youtube-release}"
+KEY_PASSWORD="youtube-release"
 
 # ============================================================
 # MODE
@@ -64,42 +70,24 @@ fi
 echo "======================================"
 echo " YouTube Morphe ROOT"
 echo "======================================"
-echo "Version              : $VERSION"
-echo "Mode                 : $MODE"
-echo "Input                : $INPUT"
-echo "Mount                : ENABLED"
-echo "GmsCore support      : DISABLED"
-echo "Custom branding      : DISABLED"
-echo "Keystore             : $KEYSTORE_ENC"
+echo "Version         : $VERSION"
+echo "Mode            : $MODE"
+echo "Input           : $INPUT"
+echo "Mount           : ENABLED"
+echo "GmsCore         : DISABLED"
+echo "Custom branding : DISABLED"
+echo "Keystore        : $KEYSTORE_ENC"
 echo "======================================"
-
-# ============================================================
-# CHECK ENCRYPTION KEY
-# ============================================================
-
-if [ -z "${KEYSTORE_ENCRYPTION_KEY:-}" ]; then
-    echo "ERROR: KEYSTORE_ENCRYPTION_KEY is not configured"
-    echo
-    echo "Add this GitHub Secret:"
-    echo "KEYSTORE_ENCRYPTION_KEY"
-    exit 1
-fi
-
-# ============================================================
-# CREATE KEY DIRECTORY
-# ============================================================
 
 mkdir -p "$KEY_DIR"
 
 # ============================================================
-# RESTORE EXISTING KEYSTORE
+# RESTORE / CREATE KEYSTORE
 # ============================================================
 
 if [ -f "$KEYSTORE_ENC" ]; then
 
-    echo "======================================"
-    echo "Restoring encrypted keystore..."
-    echo "======================================"
+    echo "Encrypted keystore found."
 
     rm -f "$KEYSTORE"
 
@@ -114,22 +102,14 @@ if [ -f "$KEYSTORE_ENC" ]; then
 
     chmod 600 "$KEYSTORE"
 
-    if [ ! -s "$KEYSTORE" ]; then
-        echo "ERROR: Failed to restore keystore"
-        exit 1
-    fi
+    test -s "$KEYSTORE"
 
-    echo "Existing keystore restored."
-
-# ============================================================
-# CREATE NEW KEYSTORE
-# ============================================================
+    echo "Keystore restored."
 
 else
 
-    echo "======================================"
+    echo "Encrypted keystore not found."
     echo "Creating new keystore..."
-    echo "======================================"
 
     rm -f "$KEYSTORE"
 
@@ -164,7 +144,7 @@ else
 
     chmod 600 "$KEYSTORE_ENC"
 
-    echo "Encrypted keystore created:"
+    echo "Created:"
     ls -lh "$KEYSTORE_ENC"
 
 fi
@@ -173,10 +153,6 @@ fi
 # VERIFY KEYSTORE
 # ============================================================
 
-echo "======================================"
-echo "Verifying keystore..."
-echo "======================================"
-
 keytool \
     -list \
     -keystore "$KEYSTORE" \
@@ -184,10 +160,10 @@ keytool \
     -alias "$KEY_ALIAS" \
     >/dev/null
 
-echo "Keystore OK."
+echo "Keystore verification: OK"
 
 # ============================================================
-# PATCH ROOT
+# CLEAN OLD BUILD
 # ============================================================
 
 rm -f \
@@ -195,8 +171,14 @@ rm -f \
     aligned_base.apk \
     base.apk
 
+rm -rf BASE_TEMPLATE
+
+# ============================================================
+# MORPHE PATCH
+# ============================================================
+
 echo "======================================"
-echo "Patching Root APK..."
+echo "Patching Root..."
 echo "======================================"
 
 if [ "$MODE" = "dev" ]; then
@@ -230,9 +212,7 @@ test -f unaligned_base.apk
 # REMOVE LIB
 # ============================================================
 
-echo "======================================"
 echo "Removing lib/*..."
-echo "======================================"
 
 zip -d \
     unaligned_base.apk \
@@ -243,9 +223,7 @@ zip -d \
 # ZIPALIGN
 # ============================================================
 
-echo "======================================"
 echo "Zipalign..."
-echo "======================================"
 
 zipalign \
     -v \
@@ -260,9 +238,7 @@ test -f aligned_base.apk
 # SIGN
 # ============================================================
 
-echo "======================================"
 echo "Signing Root APK..."
-echo "======================================"
 
 apksigner sign \
     --ks "$KEYSTORE" \
@@ -274,49 +250,34 @@ apksigner sign \
 
 test -f base.apk
 
-# Verify signature
-
-echo "Verifying APK signature..."
+echo "Verifying signature..."
 
 apksigner verify \
     --verbose \
     base.apk
 
-echo "Root APK signed successfully."
+echo "Signature OK"
 
 # ============================================================
-# CREATE MODULE
+# CREATE MAGISK STRUCTURE
 # ============================================================
-
-echo "======================================"
-echo "Creating Magisk module..."
-echo "======================================"
-
-rm -rf BASE_TEMPLATE
 
 mkdir -p \
     BASE_TEMPLATE/META-INF/com/google/android \
     BASE_TEMPLATE/stock
 
-# ============================================================
-# PATCHED APK
-# ============================================================
-
+# Patched APK
 cp -f \
     base.apk \
     BASE_TEMPLATE/base.apk
 
-# ============================================================
-# STOCK APK
-# ============================================================
-
+# Stock APK
 cp -f \
     "$INPUT" \
     BASE_TEMPLATE/stock/base.apk
 
 # ============================================================
-# BIN
-# Same approach as build_module(2).sh
+# COPY BIN
 # ============================================================
 
 if [ -d "bin_temp/bin" ]; then
@@ -366,32 +327,26 @@ ARCH="$(getprop ro.product.cpu.abi)"
 ui_print "- Architecture: $ARCH"
 
 case "$ARCH" in
-
     arm64-v8a*)
         BIN_DIR="$MODPATH/bin/arm64"
         ;;
-
     armeabi*)
         BIN_DIR="$MODPATH/bin/arm"
         ;;
-
     x86_64*)
         BIN_DIR="$MODPATH/bin/x64"
         ;;
-
     x86*)
         BIN_DIR="$MODPATH/bin/x86"
         ;;
-
     *)
         BIN_DIR="$MODPATH/bin/arm64"
         ;;
-
 esac
 
 if [ -d "$BIN_DIR" ]; then
 
-    ui_print "- Binary: $BIN_DIR"
+    ui_print "- Binary directory: $BIN_DIR"
 
     chmod -R +x "$BIN_DIR"
 
@@ -403,10 +358,6 @@ if [ -d "$BIN_DIR" ]; then
             >/dev/null 2>&1 || true
 
     fi
-
-else
-
-    ui_print "- No matching binary directory"
 
 fi
 
@@ -420,10 +371,9 @@ TARGET_APK="$(
 
 if [ -z "$TARGET_APK" ]; then
 
-    ui_print "- YouTube is not installed"
-
     if [ -f "$MODPATH/stock/base.apk" ]; then
 
+        ui_print "- YouTube not installed"
         ui_print "- Installing stock YouTube..."
 
         pm install -r \
@@ -455,8 +405,6 @@ if [ -d "$MODPATH/bin" ]; then
 fi
 
 ui_print "======================================"
-ui_print " Module prepared"
-ui_print "======================================"
 EOF
 
 # ============================================================
@@ -480,7 +428,7 @@ TARGET_APK="$(
     pm path "$PKG_NAME" 2>/dev/null |
     head -n 1 |
     cut -d':' -f2
-)
+)"
 
 if [ -z "$TARGET_APK" ]; then
     exit 0
@@ -496,9 +444,7 @@ mount -o bind \
     "$MODDIR/base.apk" \
     "$TARGET_APK"
 
-RESULT=$?
-
-if [ "$RESULT" -ne 0 ]; then
+if [ $? -ne 0 ]; then
     echo "YouTube Morphe: mount failed"
     exit 1
 fi
@@ -552,11 +498,11 @@ cat > BASE_TEMPLATE/META-INF/com/google/android/updater-script <<'EOF'
 EOF
 
 # ============================================================
-# SHOW MODULE
+# SHOW FILES
 # ============================================================
 
 echo "======================================"
-echo "Module contents:"
+echo "Module files"
 echo "======================================"
 
 find BASE_TEMPLATE \
@@ -565,8 +511,7 @@ find BASE_TEMPLATE \
     sort
 
 # ============================================================
-# CREATE ZIP
-# Same method as build_module(2).sh
+# CREATE ZIP WITH 7-ZIP
 # ============================================================
 
 echo "======================================"
@@ -585,17 +530,14 @@ cd BASE_TEMPLATE
 
 cd ..
 
+test -f "$ZIP_OUT"
+
 # ============================================================
 # VERIFY ZIP
 # ============================================================
 
-if [ ! -f "$ZIP_OUT" ]; then
-    echo "ERROR: Magisk ZIP was not created"
-    exit 1
-fi
-
 echo "======================================"
-echo "ROOT BUILD SUCCESS"
+echo "ROOT ZIP SUCCESS"
 echo "======================================"
 
 ls -lh \
@@ -604,20 +546,19 @@ ls -lh \
     "$KEYSTORE_ENC"
 
 echo "======================================"
-echo "Magisk ZIP contents:"
+echo "ZIP CONTENTS"
 echo "======================================"
 
 7z l "$ZIP_OUT"
 
 # ============================================================
-# CLEAN PRIVATE KEY
+# REMOVE PLAINTEXT KEYSTORE
 # ============================================================
 
 rm -f "$KEYSTORE"
 
 echo "======================================"
+echo "Plaintext keystore removed."
 echo "Encrypted keystore:"
 echo "$KEYSTORE_ENC"
 echo "======================================"
-
-echo "$ZIP_OUT"
