@@ -1,0 +1,77 @@
+name: Check Morphe Max Supported YouTube Version
+
+on:
+  schedule:
+    - cron: '0 21 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Cần quyền ghi để push commit
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Extract and Compare Versions
+        run: |
+          python3 -c "
+          import urllib.request
+          import re
+          import os
+
+          def get_max_yt_version(branch_name):
+              url = f'https://raw.githubusercontent.com/MorpheApp/morphe-patches/{branch_name}/README.md'
+              try:
+                  req = urllib.request.urlopen(url)
+                  readme_text = req.read().decode('utf-8')
+              except:
+                  return None
+              
+              yt_block_match = re.search(r'(?i)(?:###?\s*YouTube|com\.google\.android\.youtube)(.*?)(?:\n#+|\Z)', readme_text, re.DOTALL)
+              content = yt_block_match.group(1) if yt_block_match else readme_text
+              versions = set(re.findall(r'\b\d{2,3}\.\d{1,2}\.\d{1,3}\b|\b\d{1}\.\d{2}\.\d{1,3}\b', content))
+              valid = [v for v in versions if not v.startswith(('2024', '2025', '2026'))]
+              return sorted(valid, key=lambda v: [int(x) for x in re.findall(r'\d+', v)])[-1] if valid else None
+
+          def check_and_save(filename, branch):
+              new_ver = get_max_yt_version(branch)
+              old_ver = ''
+              if os.path.exists(filename):
+                  with open(filename, 'r') as f:
+                      old_ver = f.read().strip()
+              
+              if new_ver and new_ver != old_ver:
+                  with open(filename, 'w') as f:
+                      f.write(new_ver)
+                  print(f'VERSION_CHANGED_{branch}=true')
+                  print(f'NEW_VER_{branch}={new_ver}')
+              else:
+                  print(f'VERSION_CHANGED_{branch}=false')
+
+          check_and_save('version.txt', 'main')
+          check_and_save('version_dev.txt', 'dev')
+          " > output.txt
+
+      - name: Commit and Push if updated
+        run: |
+          # Đọc kết quả từ file output
+          source output.txt
+          
+          # Kiểm tra xem có thay đổi không
+          if [ "$VERSION_CHANGED_main" = "true" ] || [ "$VERSION_CHANGED_dev" = "true" ]; then
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add version.txt version_dev.txt
+            git commit -m "build: update YouTube versions (main: $NEW_VER_main, dev: $NEW_VER_dev)"
+            git push
+            echo "Đã cập nhật phiên bản mới."
+          else
+            echo "Không có phiên bản mới, không thực hiện commit."
+          fi
