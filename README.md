@@ -1,16 +1,25 @@
-# YouTube Morphe
+# YouTube Morphe Patch
 
-GitHub Actions downloads YouTube directly from APKMirror and patches it with MorpheApp patches.
+GitHub Actions tự động tải, patch và phát hành YouTube APK với [Morphe Patches](https://github.com/MorpheApp/morphe-patches).
 
-- `main` reads `version.txt` and uses `MorpheApp/morphe-patches` branch `main`.
-- `dev` reads `version_dev.txt` and uses `MorpheApp/morphe-patches` branch `dev`.
-- APKMirror download logic is isolated in `scripts/download_youtube.js`.
-- No dependency on `download_yt_synology`.
-- No Playwright.
-- APKMirror downloader uses wget and waits 15 seconds before looking for the download button and the final `here` link.
+## 📌 Links
 
-Files:
-- `.github/workflows/patch.yml`
-- `scripts/download_youtube.js`
-- `version.txt`
-- `version_dev.txt`
+Morphe Patches:
+
+https://github.com/MorpheApp/morphe-patches
+
+Morphe Releases:
+
+https://github.com/MorpheApp/morphe-patches/releases
+
+## ⚠️ Lưu ý
+
+Đảm bảo quyền sử dụng APK nguồn và tuân thủ license của YouTube, Morphe và các thành phần liên quan.
+
+Không đưa private key hoặc encryption key trực tiếp vào source code.
+
+`KEYSTORE_ENCRYPTION_KEY` phải được lưu trong GitHub Secrets.
+
+## 📄 License
+
+Các thành phần của repository tuân theo license tương ứng của từng dự án nguồn.
