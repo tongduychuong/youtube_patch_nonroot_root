@@ -1,80 +1,32 @@
 name: YouTube Morphe Patch
 
-on:
+"on":
   workflow_dispatch:
-
   schedule:
-    # 23:00 Vietnam = 16:00 UTC
     - cron: "0 16 * * *"
 
 permissions:
   contents: write
 
-
 jobs:
-
-  # ==================================================
-  # MAIN - STABLE
-  # ==================================================
-
   main:
     name: Morphe Stable
     runs-on: ubuntu-latest
 
     steps:
-
-      # ----------------------------------------------
-      # CHECKOUT
-      # ----------------------------------------------
-
       - name: Checkout
         uses: actions/checkout@v4
 
-
-      # ----------------------------------------------
-      # JAVA 21
-      # ----------------------------------------------
-
-      - name: Setup Java 21
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
-
-      # ----------------------------------------------
-      # DEPENDENCIES
-      # ----------------------------------------------
-
-      - name: Install dependencies
+      - name: Read version
         shell: bash
         run: |
           set -e
-
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            jq \
-            zip \
-            unzip \
-            curl \
-            wget
-
-
-      # ----------------------------------------------
-      # READ VERSION
-      # ----------------------------------------------
-
-      - name: Read version.txt
-        shell: bash
-        run: |
-          set -e
-
-          if [ ! -f version.txt ]; then
-            echo "ERROR: version.txt not found"
-            exit 1
-          fi
-
           VERSION="$(tr -d '\r\n' < version.txt | xargs)"
 
           if [ -z "$VERSION" ]; then
@@ -83,276 +35,102 @@ jobs:
           fi
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "MAIN VERSION: $VERSION"
 
-          echo "======================================"
-          echo "MORPHE STABLE"
-          echo "YouTube version: $VERSION"
-          echo "Patch: main"
-          echo "======================================"
+      - name: Download YouTube
+        shell: bash
+        run: |
+          set -e
+          test -f scripts/download_youtube.sh
+          chmod +x scripts/download_youtube.sh
+          ./scripts/download_youtube.sh "$VERSION"
 
-
-      # ----------------------------------------------
-      # CLONE MORPHE BUILDER
-      # ----------------------------------------------
-
-      - name: Clone Morphe Builder
+      - name: Find YouTube
         shell: bash
         run: |
           set -e
 
-          git clone \
-            --depth 1 \
-            https://github.com/elohim-etz/morphe-builder.git \
-            morphe-builder
+          INPUT="$(find . -maxdepth 2 -type f \( \
+            -name "*.apk" -o \
+            -name "*.apkm" -o \
+            -name "*.xapk" -o \
+            -name "*.apks" \
+          \) | head -n 1)"
 
-          cd morphe-builder
-
-          echo "Builder commit:"
-          git rev-parse HEAD
-
-
-      # ----------------------------------------------
-      # FORCE APKMIRROR BUNDLE
-      # ----------------------------------------------
-
-      - name: Configure APKMirror BUNDLE first
-        shell: bash
-        run: |
-          set -e
-
-          cd morphe-builder
-
-          # Morphe Builder normally checks APK before BUNDLE.
-          # Change order to BUNDLE -> APK.
-
-          sed -i \
-            's/for type in APK BUNDLE;/for type in BUNDLE APK;/' \
-            utils.sh
-
-          echo "APKMirror selection order:"
-
-          grep \
-            -n \
-            "for type in BUNDLE APK" \
-            utils.sh
-
-
-      # ----------------------------------------------
-      # CREATE CONFIG
-      # ----------------------------------------------
-
-      - name: Create stable config
-        shell: bash
-        env:
-          VERSION: ${{ env.VERSION }}
-        run: |
-          set -e
-
-          cd morphe-builder
-
-          cat > config.toml <<EOF
-          enable-module-update = false
-          parallel-jobs = 1
-          patches-version = "latest"
-          cli-version = "latest"
-          
-          [YouTube]
-          
-          enabled = true
-          
-          app-name = "YouTube"
-          
-          version = "${VERSION}"
-          
-          arch = "all"
-          
-          build-mode = "both"
-          
-          rv-brand = "Morphe"
-          
-          apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/youtube"
-          
-          patches-source = "MorpheApp/morphe-patches"
-          
-          cli-source = "MorpheApp/morphe-desktop"
-          
-          excluded-patches = "\"Custom branding\""
-          EOF
-          
-                    echo "======================================"
-                    echo "CONFIG"
-                    echo "======================================"
-          
-                    cat config.toml
-
-
-      # ----------------------------------------------
-      # BUILD
-      # ----------------------------------------------
-
-      - name: Build stable APK + ROOT module
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -e
-
-          cd morphe-builder
-
-          chmod +x build.sh
-
-          ./build.sh config.toml
-
-
-      # ----------------------------------------------
-      # FIND OUTPUT
-      # ----------------------------------------------
-
-      - name: Find stable outputs
-        shell: bash
-        run: |
-          set -e
-
-          echo "======================================"
-          echo "BUILD OUTPUT"
-          echo "======================================"
-
-          find morphe-builder/build \
-            -maxdepth 1 \
-            -type f \
-            -printf '%f %s bytes\n'
-
-
-      # ----------------------------------------------
-      # RENAME OUTPUT
-      # ----------------------------------------------
-
-      - name: Rename stable outputs
-        shell: bash
-        env:
-          VERSION: ${{ env.VERSION }}
-        run: |
-          set -e
-
-          mkdir -p output
-
-          APK="$(
-            find morphe-builder/build \
-              -maxdepth 1 \
-              -type f \
-              -name "*.apk" |
-            head -n 1
-          )"
-
-          MODULE="$(
-            find morphe-builder/build \
-              -maxdepth 1 \
-              -type f \
-              -name "*.zip" |
-            head -n 1
-          )"
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: Stable APK not found"
+          if [ -z "$INPUT" ]; then
+            echo "ERROR: YouTube APK/BUNDLE not found"
             exit 1
           fi
 
-          if [ -z "$MODULE" ]; then
-            echo "ERROR: Stable root module not found"
+          echo "INPUT=$INPUT" >> "$GITHUB_ENV"
+          echo "Selected: $INPUT"
+
+      - name: Download Morphe
+        shell: bash
+        run: |
+          set -e
+
+          API="https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
+
+          URL="$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: GitHubActions" \
+            "$API" \
+            | grep -o 'https://[^"]*morphe-desktop-[^"]*-all\.jar' \
+            | head -n 1)"
+
+          if [ -z "$URL" ]; then
+            echo "ERROR: Morphe CLI not found"
             exit 1
           fi
 
-          cp \
-            "$APK" \
-            "output/youtube-morphe-${VERSION}.apk"
+          curl -fL \
+            -H "User-Agent: GitHubActions" \
+            "$URL" \
+            -o morphe-cli.jar
 
-          cp \
-            "$MODULE" \
-            "output/youtube-morphe-root-${VERSION}.zip"
+          test -s morphe-cli.jar
 
-          echo "======================================"
-          echo "STABLE OUTPUT"
-          echo "======================================"
+      - name: Patch Stable
+        shell: bash
+        run: |
+          set -e
 
-          ls -lh output
+          java -jar morphe-cli.jar patch \
+            --patches \
+            https://github.com/MorpheApp/morphe-patches \
+            --disable "Custom branding" \
+            -o "youtube-morphe-${VERSION}.apk" \
+            "$INPUT"
 
+          test -f "youtube-morphe-${VERSION}.apk"
 
-      # ----------------------------------------------
-      # UPLOAD ARTIFACT
-      # ----------------------------------------------
-
-      - name: Upload stable artifacts
+      - name: Upload Stable
         uses: actions/upload-artifact@v4
         with:
           name: youtube-morphe-stable
-          path: |
-            output/youtube-morphe-${{ env.VERSION }}.apk
-            output/youtube-morphe-root-${{ env.VERSION }}.zip
+          path: "youtube-morphe-${{ env.VERSION }}.apk"
           retention-days: 1
 
-
-  # ==================================================
-  # DEV - MORPHE PRERELEASE
-  # ==================================================
 
   dev:
     name: Morphe Dev
     runs-on: ubuntu-latest
 
     steps:
-
-      # ----------------------------------------------
-      # CHECKOUT
-      # ----------------------------------------------
-
       - name: Checkout
         uses: actions/checkout@v4
 
-
-      # ----------------------------------------------
-      # JAVA 21
-      # ----------------------------------------------
-
-      - name: Setup Java 21
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
-
-      # ----------------------------------------------
-      # DEPENDENCIES
-      # ----------------------------------------------
-
-      - name: Install dependencies
+      - name: Read dev version
         shell: bash
         run: |
           set -e
-
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            jq \
-            zip \
-            unzip \
-            curl \
-            wget
-
-
-      # ----------------------------------------------
-      # READ VERSION_DEV
-      # ----------------------------------------------
-
-      - name: Read version_dev.txt
-        shell: bash
-        run: |
-          set -e
-
-          if [ ! -f version_dev.txt ]; then
-            echo "ERROR: version_dev.txt not found"
-            exit 1
-          fi
-
           VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
 
           if [ -z "$VERSION" ]; then
@@ -361,338 +139,137 @@ jobs:
           fi
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "DEV VERSION: $VERSION"
 
-          echo "======================================"
-          echo "MORPHE DEV"
-          echo "YouTube version: $VERSION"
-          echo "Patch: DEV / PRERELEASE"
-          echo "======================================"
+      - name: Download YouTube
+        shell: bash
+        run: |
+          set -e
+          test -f scripts/download_youtube.sh
+          chmod +x scripts/download_youtube.sh
+          ./scripts/download_youtube.sh "$VERSION"
 
-
-      # ----------------------------------------------
-      # CLONE MORPHE BUILDER
-      # ----------------------------------------------
-
-      - name: Clone Morphe Builder
+      - name: Find YouTube
         shell: bash
         run: |
           set -e
 
-          git clone \
-            --depth 1 \
-            https://github.com/elohim-etz/morphe-builder.git \
-            morphe-builder
+          INPUT="$(find . -maxdepth 2 -type f \( \
+            -name "*.apk" -o \
+            -name "*.apkm" -o \
+            -name "*.xapk" -o \
+            -name "*.apks" \
+          \) | head -n 1)"
 
-          cd morphe-builder
-
-          echo "Builder commit:"
-          git rev-parse HEAD
-
-
-      # ----------------------------------------------
-      # FORCE APKMIRROR BUNDLE
-      # ----------------------------------------------
-
-      - name: Configure APKMirror BUNDLE first
-        shell: bash
-        run: |
-          set -e
-
-          cd morphe-builder
-
-          sed -i \
-            's/for type in APK BUNDLE;/for type in BUNDLE APK;/' \
-            utils.sh
-
-          echo "APKMirror selection order:"
-
-          grep \
-            -n \
-            "for type in BUNDLE APK" \
-            utils.sh
-
-
-      # ----------------------------------------------
-      # CREATE DEV CONFIG
-      # ----------------------------------------------
-
-      - name: Create dev config
-        shell: bash
-        env:
-          VERSION: ${{ env.VERSION }}
-        run: |
-          set -e
-
-          cd morphe-builder
-
-          cat > config.toml <<EOF
-          enable-module-update = false
-          parallel-jobs = 1
-          patches-version = "dev"
-          cli-version = "latest"
-          
-          [YouTube]
-          
-          enabled = true
-          
-          app-name = "YouTube"
-          
-          version = "${VERSION}"
-          
-          arch = "all"
-          
-          build-mode = "both"
-          
-          rv-brand = "Morphe Dev"
-          
-          apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/youtube"
-          
-          patches-source = "MorpheApp/morphe-patches"
-          
-          cli-source = "MorpheApp/morphe-desktop"
-          
-          excluded-patches = "\"Custom branding\""
-          EOF
-          
-                    echo "======================================"
-                    echo "DEV CONFIG"
-                    echo "======================================"
-          
-                    cat config.toml
-
-
-      # ----------------------------------------------
-      # BUILD DEV
-      # ----------------------------------------------
-
-      - name: Build dev APK + ROOT module
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -e
-
-          cd morphe-builder
-
-          chmod +x build.sh
-
-          ./build.sh config.toml
-
-
-      # ----------------------------------------------
-      # FIND OUTPUT
-      # ----------------------------------------------
-
-      - name: Find dev outputs
-        shell: bash
-        run: |
-          set -e
-
-          echo "======================================"
-          echo "DEV BUILD OUTPUT"
-          echo "======================================"
-
-          find morphe-builder/build \
-            -maxdepth 1 \
-            -type f \
-            -printf '%f %s bytes\n'
-
-
-      # ----------------------------------------------
-      # RENAME DEV
-      # ----------------------------------------------
-
-      - name: Rename dev outputs
-        shell: bash
-        env:
-          VERSION: ${{ env.VERSION }}
-        run: |
-          set -e
-
-          mkdir -p output
-
-          APK="$(
-            find morphe-builder/build \
-              -maxdepth 1 \
-              -type f \
-              -name "*.apk" |
-            head -n 1
-          )"
-
-          MODULE="$(
-            find morphe-builder/build \
-              -maxdepth 1 \
-              -type f \
-              -name "*.zip" |
-            head -n 1
-          )"
-
-          if [ -z "$APK" ]; then
-            echo "ERROR: Dev APK not found"
+          if [ -z "$INPUT" ]; then
+            echo "ERROR: YouTube APK/BUNDLE not found"
             exit 1
           fi
 
-          if [ -z "$MODULE" ]; then
-            echo "ERROR: Dev root module not found"
+          echo "INPUT=$INPUT" >> "$GITHUB_ENV"
+          echo "Selected: $INPUT"
+
+      - name: Download Morphe
+        shell: bash
+        run: |
+          set -e
+
+          API="https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
+
+          URL="$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "User-Agent: GitHubActions" \
+            "$API" \
+            | grep -o 'https://[^"]*morphe-desktop-[^"]*-all\.jar' \
+            | head -n 1)"
+
+          if [ -z "$URL" ]; then
+            echo "ERROR: Morphe CLI not found"
             exit 1
           fi
 
-          cp \
-            "$APK" \
-            "output/youtube-morphe-dev-${VERSION}.apk"
+          curl -fL \
+            -H "User-Agent: GitHubActions" \
+            "$URL" \
+            -o morphe-cli.jar
 
-          cp \
-            "$MODULE" \
-            "output/youtube-morphe-dev-root-${VERSION}.zip"
+          test -s morphe-cli.jar
 
-          echo "======================================"
-          echo "DEV OUTPUT"
-          echo "======================================"
+      - name: Patch Dev
+        shell: bash
+        run: |
+          set -e
 
-          ls -lh output
+          java -jar morphe-cli.jar patch \
+            --patches \
+            https://github.com/MorpheApp/morphe-patches \
+            --prerelease \
+            --disable "Custom branding" \
+            -o "youtube-morphe-dev-${VERSION}.apk" \
+            "$INPUT"
 
+          test -f "youtube-morphe-dev-${VERSION}.apk"
 
-      # ----------------------------------------------
-      # UPLOAD ARTIFACT
-      # ----------------------------------------------
-
-      - name: Upload dev artifacts
+      - name: Upload Dev
         uses: actions/upload-artifact@v4
         with:
           name: youtube-morphe-dev
-          path: |
-            output/youtube-morphe-dev-${{ env.VERSION }}.apk
-            output/youtube-morphe-dev-root-${{ env.VERSION }}.zip
+          path: "youtube-morphe-dev-${{ env.VERSION }}.apk"
           retention-days: 1
 
 
-  # ==================================================
-  # COMMON RELEASE
-  #
-  # MAIN + DEV chạy song song
-  # RELEASE chờ cả hai
-  # ==================================================
-
   release:
     name: Common Release
-
     needs:
       - main
       - dev
-
     runs-on: ubuntu-latest
 
     steps:
-
-      # ----------------------------------------------
-      # CHECKOUT
-      # ----------------------------------------------
-
       - name: Checkout
         uses: actions/checkout@v4
 
-
-      # ----------------------------------------------
-      # DOWNLOAD STABLE
-      # ----------------------------------------------
-
-      - name: Download stable artifacts
+      - name: Download Stable
         uses: actions/download-artifact@v4
         with:
           name: youtube-morphe-stable
           path: release
 
-
-      # ----------------------------------------------
-      # DOWNLOAD DEV
-      # ----------------------------------------------
-
-      - name: Download dev artifacts
+      - name: Download Dev
         uses: actions/download-artifact@v4
         with:
           name: youtube-morphe-dev
           path: release
-
-
-      # ----------------------------------------------
-      # LIST
-      # ----------------------------------------------
-
-      - name: List release files
-        shell: bash
-        run: |
-          set -e
-
-          echo "======================================"
-          echo "FILES"
-          echo "======================================"
-
-          find release \
-            -maxdepth 1 \
-            -type f \
-            -printf '%f %s bytes\n'
-
-
-      # ----------------------------------------------
-      # GET VERSIONS
-      # ----------------------------------------------
 
       - name: Get versions
         shell: bash
         run: |
           set -e
 
-          MAIN_APK="$(
-            find release \
-              -maxdepth 1 \
-              -name 'youtube-morphe-*.apk' |
-            grep -v 'youtube-morphe-dev-' |
-            head -n 1
-          )"
+          MAIN_APK="$(find release -maxdepth 1 \
+            -name 'youtube-morphe-*.apk' \
+            ! -name 'youtube-morphe-dev-*' \
+            | head -n 1)"
 
-          DEV_APK="$(
-            find release \
-              -maxdepth 1 \
-              -name 'youtube-morphe-dev-*.apk' |
-            head -n 1
-          )"
+          DEV_APK="$(find release -maxdepth 1 \
+            -name 'youtube-morphe-dev-*.apk' \
+            | head -n 1)"
 
-          if [ -z "$MAIN_APK" ]; then
-            echo "ERROR: Main APK missing"
-            exit 1
-          fi
+          test -n "$MAIN_APK"
+          test -n "$DEV_APK"
 
-          if [ -z "$DEV_APK" ]; then
-            echo "ERROR: Dev APK missing"
-            exit 1
-          fi
+          MAIN_VERSION="$(basename "$MAIN_APK" \
+            | sed 's/^youtube-morphe-//' \
+            | sed 's/\.apk$//')"
 
-          MAIN_VERSION="$(
-            basename "$MAIN_APK" |
-            sed 's/^youtube-morphe-//' |
-            sed 's/\.apk$//'
-          )"
-
-          DEV_VERSION="$(
-            basename "$DEV_APK" |
-            sed 's/^youtube-morphe-dev-//' |
-            sed 's/\.apk$//'
-          )"
+          DEV_VERSION="$(basename "$DEV_APK" \
+            | sed 's/^youtube-morphe-dev-//' \
+            | sed 's/\.apk$//')"
 
           echo "MAIN_VERSION=$MAIN_VERSION" >> "$GITHUB_ENV"
           echo "DEV_VERSION=$DEV_VERSION" >> "$GITHUB_ENV"
 
-          echo "MAIN VERSION: $MAIN_VERSION"
-          echo "DEV VERSION:  $DEV_VERSION"
-
-
-      # ----------------------------------------------
-      # CREATE / UPDATE RELEASE
-      #
-      # KHÔNG XÓA RELEASE CŨ
-      # ----------------------------------------------
-
-      - name: Create or update release
+      - name: Create or update Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -701,128 +278,34 @@ jobs:
 
           TAG="youtube-morphe"
 
-          echo "======================================"
-          echo "RELEASE"
-          echo "TAG: $TAG"
-          echo "MAIN: $MAIN_VERSION"
-          echo "DEV:  $DEV_VERSION"
-          echo "======================================"
-
-
-          # ============================================
-          # CREATE IF NOT EXISTS
-          # ============================================
-
           if gh release view "$TAG" >/dev/null 2>&1; then
-
-            echo "Release exists."
-            echo "NOT deleting existing release."
-
+            echo "Release already exists"
           else
+            gh release create "$TAG" \
+              --title "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
+              --notes "YouTube Morphe
 
-            echo "Creating release..."
-
-            gh release create \
-              "$TAG" \
-              --title \
-              "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
-              --notes \
-                  "## YouTube Morphe
-                  
-                  ### Non-root Stable
-                  
-                  Version: ${MAIN_VERSION}
-                  
-                  ### Root Stable
-                  
-                  Version: ${MAIN_VERSION}
-                  
-                  ### Non-root Dev
-                  
-                  Version: ${DEV_VERSION}
-                  
-                  ### Root Dev
-                  
-                  Version: ${DEV_VERSION}
-                  
-                  ### Patches
-                  
-                  Stable:
-                  MorpheApp/morphe-patches main
-                  
-                  Dev:
-                  MorpheApp/morphe-patches pre-release
-                  
-                  Custom branding:
-                  Disabled
-                  
-                  MAIN and DEV are built in parallel."
-
+          Stable: ${MAIN_VERSION}
+          Dev: ${DEV_VERSION}
+          
+          Custom branding: Disabled"
           fi
 
-
-          # ============================================
-          # UPDATE TITLE / NOTES
-          # ============================================
-
           gh release edit "$TAG" \
-            --title \
-            "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
-            --notes \
-                "## YouTube Morphe
-                
-                ### Non-root Stable
-                
-                Version: ${MAIN_VERSION}
-                
-                ### Root Stable
-                
-                Version: ${MAIN_VERSION}
-                
-                ### Non-root Dev
-                
-                Version: ${DEV_VERSION}
-                
-                ### Root Dev
-                
-                Version: ${DEV_VERSION}
-                
-                ### Patches
-                
-                Stable:
-                MorpheApp/morphe-patches main
-                
-                Dev:
-                MorpheApp/morphe-patches pre-release
-                
-                Custom branding:
-                Disabled
-                
-                MAIN and DEV are built in parallel."
+            --title "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
+            --notes "YouTube Morphe
 
+          Stable: ${MAIN_VERSION}
+          Dev: ${DEV_VERSION}
+          
+          Custom branding: Disabled"
 
-          # ============================================
-          # UPLOAD ONLY APK + ZIP
-          #
-          # KHÔNG upload SHA256
-          # KHÔNG xóa release
-          # ============================================
-
-          echo "Uploading APK + ROOT ZIP..."
-
-          gh release upload \
-            "$TAG" \
+          gh release upload "$TAG" \
             release/*.apk \
-            release/*.zip \
             --clobber
 
-
-          # ============================================
-          # SHOW RELEASE
-          # ============================================
-
           echo "======================================"
-          echo "RELEASE UPDATED"
+          echo "RELEASE SUCCESS"
           echo "======================================"
 
           gh release view "$TAG"
