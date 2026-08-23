@@ -22,17 +22,8 @@ jobs:
 
     steps:
 
-      # ================================================
-      # CHECKOUT REPOSITORY HIỆN TẠI
-      # ================================================
-
       - name: Checkout
         uses: actions/checkout@v4
-
-
-      # ================================================
-      # JAVA 21
-      # ================================================
 
       - name: Setup Java 21
         uses: actions/setup-java@v4
@@ -40,21 +31,11 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-
-      # ================================================
-      # CHECK JAVA
-      # ================================================
-
       - name: Check Java
         shell: bash
         run: |
           set -e
           java -version
-
-
-      # ================================================
-      # READ version.txt
-      # ================================================
 
       - name: Read main version
         shell: bash
@@ -80,11 +61,6 @@ jobs:
           echo "VERSION: $VERSION"
           echo "======================================"
 
-
-      # ================================================
-      # DOWNLOAD YOUTUBE
-      # ================================================
-
       - name: Download YouTube from APKMirror
         shell: bash
         env:
@@ -98,11 +74,6 @@ jobs:
           fi
 
           node scripts/download_youtube.js
-
-
-      # ================================================
-      # CHECK APK
-      # ================================================
 
       - name: Check YouTube APK
         shell: bash
@@ -120,11 +91,6 @@ jobs:
           fi
 
           ls -lh "$APK"
-
-
-      # ================================================
-      # DOWNLOAD MORPHE CLI
-      # ================================================
 
       - name: Download Morphe CLI
         shell: bash
@@ -160,11 +126,6 @@ jobs:
 
           ls -lh morphe-cli.jar
 
-
-      # ================================================
-      # PATCH MORPHE MAIN
-      # ================================================
-
       - name: Patch YouTube MAIN
         shell: bash
         env:
@@ -186,11 +147,6 @@ jobs:
             https://github.com/MorpheApp/morphe-patches \
             "$APK"
 
-
-      # ================================================
-      # FIND PATCHED APK
-      # ================================================
-
       - name: Find patched APK
         shell: bash
         run: |
@@ -200,11 +156,6 @@ jobs:
             -type f \
             -name "*.apk" \
             -printf '%p %s bytes\n'
-
-
-      # ================================================
-      # RENAME MAIN APK
-      # ================================================
 
       - name: Rename main APK
         shell: bash
@@ -234,11 +185,6 @@ jobs:
 
           ls -lh "$OUTPUT"
 
-
-      # ================================================
-      # SHA256 MAIN
-      # ================================================
-
       - name: Generate main SHA256
         shell: bash
         env:
@@ -253,11 +199,6 @@ jobs:
             > "${APK}.sha256"
 
           cat "${APK}.sha256"
-
-
-      # ================================================
-      # UPLOAD MAIN ARTIFACT
-      # ================================================
 
       - name: Upload main artifact
         uses: actions/upload-artifact@v4
@@ -281,17 +222,8 @@ jobs:
 
     steps:
 
-      # ================================================
-      # CHECKOUT REPOSITORY HIỆN TẠI
-      # ================================================
-
       - name: Checkout
         uses: actions/checkout@v4
-
-
-      # ================================================
-      # JAVA 21
-      # ================================================
 
       - name: Setup Java 21
         uses: actions/setup-java@v4
@@ -299,21 +231,11 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-
-      # ================================================
-      # CHECK JAVA
-      # ================================================
-
       - name: Check Java
         shell: bash
         run: |
           set -e
           java -version
-
-
-      # ================================================
-      # READ version_dev.txt
-      # ================================================
 
       - name: Read dev version
         shell: bash
@@ -340,11 +262,6 @@ jobs:
           echo "MODE: PRERELEASE"
           echo "======================================"
 
-
-      # ================================================
-      # DOWNLOAD YOUTUBE
-      # ================================================
-
       - name: Download YouTube from APKMirror
         shell: bash
         env:
@@ -358,11 +275,6 @@ jobs:
           fi
 
           node scripts/download_youtube.js
-
-
-      # ================================================
-      # CHECK APK
-      # ================================================
 
       - name: Check YouTube APK
         shell: bash
@@ -380,11 +292,6 @@ jobs:
           fi
 
           ls -lh "$APK"
-
-
-      # ================================================
-      # DOWNLOAD MORPHE CLI
-      # ================================================
 
       - name: Download Morphe CLI
         shell: bash
@@ -420,11 +327,6 @@ jobs:
 
           ls -lh morphe-cli.jar
 
-
-      # ================================================
-      # PATCH MORPHE DEV
-      # ================================================
-
       - name: Patch YouTube MORPHE DEV
         shell: bash
         env:
@@ -448,11 +350,6 @@ jobs:
             --prerelease \
             "$APK"
 
-
-      # ================================================
-      # FIND PATCHED APK
-      # ================================================
-
       - name: Find patched APK
         shell: bash
         run: |
@@ -462,11 +359,6 @@ jobs:
             -type f \
             -name "*.apk" \
             -printf '%p %s bytes\n'
-
-
-      # ================================================
-      # RENAME DEV APK
-      # ================================================
 
       - name: Rename dev APK
         shell: bash
@@ -496,11 +388,6 @@ jobs:
 
           ls -lh "$OUTPUT"
 
-
-      # ================================================
-      # SHA256 DEV
-      # ================================================
-
       - name: Generate dev SHA256
         shell: bash
         env:
@@ -515,11 +402,6 @@ jobs:
             > "${APK}.sha256"
 
           cat "${APK}.sha256"
-
-
-      # ================================================
-      # UPLOAD DEV ARTIFACT
-      # ================================================
 
       - name: Upload dev artifact
         uses: actions/upload-artifact@v4
@@ -548,6 +430,15 @@ jobs:
     steps:
 
       # ================================================
+      # CHECKOUT
+      #
+      # Cần .git để GitHub CLI thao tác release
+      # ================================================
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ================================================
       # DOWNLOAD MAIN ARTIFACT
       # ================================================
 
@@ -556,7 +447,6 @@ jobs:
         with:
           name: youtube-morphe-main
           path: release
-
 
       # ================================================
       # DOWNLOAD DEV ARTIFACT
@@ -568,9 +458,8 @@ jobs:
           name: youtube-morphe-dev
           path: release
 
-
       # ================================================
-      # LIST RELEASE FILES
+      # LIST FILES
       # ================================================
 
       - name: List release files
@@ -582,8 +471,10 @@ jobs:
           echo "RELEASE FILES"
           echo "======================================"
 
-          ls -lh release
-
+          find release \
+            -maxdepth 1 \
+            -type f \
+            -printf '%f %s bytes\n'
 
       # ================================================
       # GET VERSIONS
@@ -637,6 +528,22 @@ jobs:
           echo "MAIN VERSION: $MAIN_VERSION"
           echo "DEV VERSION: $DEV_VERSION"
 
+      # ================================================
+      # CHECK GH CLI
+      # ================================================
+
+      - name: Check GitHub CLI
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          gh --version
+
+          gh repo view \
+            --json nameWithOwner \
+            -q '.nameWithOwner'
 
       # ================================================
       # CREATE OR UPDATE RELEASE
@@ -660,9 +567,8 @@ jobs:
           echo "DEV:  $DEV_VERSION"
           echo "======================================"
 
-
           # ============================================
-          # CREATE RELEASE IF NOT EXISTS
+          # CREATE IF NOT EXISTS
           # ============================================
 
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -683,15 +589,17 @@ jobs:
                   "## YouTube Morphe
                   
                   ### MAIN
+                  
                   Version: ${MAIN_VERSION}
                   
-                  Patch source:
+                  Patch:
                   MorpheApp/morphe-patches main
                   
                   ### DEV
+                  
                   Version: ${DEV_VERSION}
                   
-                  Patch source:
+                  Patch:
                   MorpheApp/morphe-patches prerelease/dev
                   
                   MAIN and DEV are patched in parallel.
@@ -701,7 +609,6 @@ jobs:
 
           fi
 
-
           # ============================================
           # UPDATE TITLE / NOTES
           # ============================================
@@ -710,32 +617,33 @@ jobs:
             --title \
             "YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}" \
             --notes \
-                "## YouTube Morphe
-                
-                ### MAIN
-                Version: ${MAIN_VERSION}
-                
-                Patch source:
-                MorpheApp/morphe-patches main
-                
-                ### DEV
-                Version: ${DEV_VERSION}
-                
-                Patch source:
-                MorpheApp/morphe-patches prerelease/dev
-                
-                MAIN and DEV are patched in parallel.
-                
-                Scheduled:
-                23:00 Vietnam time."
-
+              "## YouTube Morphe
+              
+              ### MAIN
+              
+              Version: ${MAIN_VERSION}
+              
+              Patch:
+              MorpheApp/morphe-patches main
+              
+              ### DEV
+              
+              Version: ${DEV_VERSION}
+              
+              Patch:
+              MorpheApp/morphe-patches prerelease/dev
+              
+              MAIN and DEV are patched in parallel.
+              
+              Scheduled:
+              23:00 Vietnam time."
 
           # ============================================
-          # UPLOAD / UPDATE ASSETS
+          # UPLOAD ASSETS
           #
           # --clobber:
-          # nếu cùng tên -> thay file
-          # nếu tên khác -> giữ file cũ
+          # cùng tên -> thay file
+          # tên khác -> giữ file cũ
           # ============================================
 
           echo "Uploading APK files..."
@@ -746,13 +654,12 @@ jobs:
             release/*.sha256 \
             --clobber
 
-
           # ============================================
           # SHOW RELEASE
           # ============================================
 
           echo "======================================"
-          echo "RELEASE UPDATED"
+          echo "RELEASE UPDATED SUCCESSFULLY"
           echo "======================================"
 
           gh release view "$TAG"
