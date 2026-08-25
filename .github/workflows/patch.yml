@@ -8,6 +8,7 @@ name: YouTube Morphe Patch
         required: false
         type: boolean
         default: true
+
   schedule:
     - cron: "0 22 * * *"
 
@@ -20,65 +21,145 @@ env:
   MICROG_URL: https://github.com/MorpheApp/MicroG-RE/releases
 
 jobs:
+
   stable:
     name: Stable
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
+
       - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y p7zip-full zipalign apksigner openssl jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            p7zip-full \
+            zipalign \
+            apksigner \
+            openssl \
+            jq
+
       - name: Build Stable
         env:
           KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           chmod +x scripts/*.sh
+
           scripts/check_patch.sh stable
-          if [ "$BUILD" != "true" ]; then exit 0; fi
-          VERSION="$(tr -d '\r\n' < version.txt | xargs)"
+
+          if [ "$BUILD" != "true" ]; then
+            echo "Stable patch already built."
+            exit 0
+          fi
+
+          VERSION="$(cat version.txt | tr -d '\r\n' | xargs)"
+
           node scripts/download_youtube.js "$VERSION"
-          APK="$(find . -type f -name '*.apk' ! -path './.git/*' | head -n 1)"
+
+          APK="$(
+            find . \
+              -type f \
+              -name "*.apk" \
+              ! -path "./.git/*" |
+            head -n 1
+          )"
+
           test -n "$APK"
-          scripts/build_nonroot.sh "$VERSION" "$APK" stable
-          scripts/build_root.sh "$VERSION" "$APK" stable
-          scripts/create_release.sh stable "$VERSION"
+
+          scripts/build_nonroot.sh \
+            "$VERSION" \
+            "$APK" \
+            stable
+
+          scripts/build_root.sh \
+            "$VERSION" \
+            "$APK" \
+            stable
+
+          scripts/create_release.sh \
+            stable \
+            "$VERSION"
 
   dev:
     name: Dev
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
+
       - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y p7zip-full zipalign apksigner openssl jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            p7zip-full \
+            zipalign \
+            apksigner \
+            openssl \
+            jq
+
       - name: Build Dev
         env:
           KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           chmod +x scripts/*.sh
+
           scripts/check_patch.sh dev
-          if [ "$BUILD" != "true" ]; then exit 0; fi
-          VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
+
+          if [ "$BUILD" != "true" ]; then
+            echo "Dev patch already built."
+            exit 0
+          fi
+
+          VERSION="$(cat version_dev.txt | tr -d '\r\n' | xargs)"
+
           node scripts/download_youtube.js "$VERSION"
-          APK="$(find . -type f -name '*.apk' ! -path './.git/*' | head -n 1)"
+
+          APK="$(
+            find . \
+              -type f \
+              -name "*.apk" \
+              ! -path "./.git/*" |
+            head -n 1
+          )"
+
           test -n "$APK"
-          scripts/build_nonroot.sh "$VERSION" "$APK" dev
-          scripts/build_root.sh "$VERSION" "$APK" dev
-          scripts/create_release.sh dev "$VERSION"
+
+          scripts/build_nonroot.sh \
+            "$VERSION" \
+            "$APK" \
+            dev
+
+          scripts/build_root.sh \
+            "$VERSION" \
+            "$APK" \
+            dev
+
+          scripts/create_release.sh \
+            dev \
+            "$VERSION"
 
   cleanup:
     name: Cleanup
-    needs: [stable, dev]
+    needs:
+      - stable
+      - dev
+
     if: always()
+
     runs-on: ubuntu-latest
+
     steps:
       - name: Cleanup
         env:
