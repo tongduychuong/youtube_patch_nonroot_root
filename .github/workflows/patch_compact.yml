@@ -1,4 +1,4 @@
-name: YouTube Morphe Patch
+name: YouTube Morphe Patch test
 
 on:
   workflow_dispatch:
