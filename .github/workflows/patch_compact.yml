@@ -17,7 +17,6 @@ permissions:
 
 env:
   MORPHE_REPO: MorpheApp/morphe-patches
-  RELEASE_TAG: youtube-morphe
   MICROG_URL: https://github.com/MorpheApp/MicroG-RE/releases
 
 jobs:
@@ -28,9 +27,6 @@ jobs:
       contents: write
     env:
       KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
-      VERSION_FILE: version.txt
-      BUILD_FLAG: BUILD_STABLE
-      BUILD_TYPE: stable
     steps:
       - uses: actions/checkout@v4
 
@@ -45,44 +41,48 @@ jobs:
       - name: Prepare
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
           set -e
-          VERSION="$(tr -d '\r\n' < "$VERSION_FILE" | xargs)"
+          VERSION="$(tr -d '\r\n' < version.txt | xargs)"
           test -n "$VERSION"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-          TAG="$(curl -fsSL --retry 5 -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${MORPHE_REPO}/releases/latest" | jq -r '.tag_name')"
+          TAG="$(curl -fsSL --retry 5 \
+            "https://api.github.com/repos/${MORPHE_REPO}/releases/latest" |
+            jq -r '.tag_name')"
           test -n "$TAG" && test "$TAG" != null
           echo "MORPHE_VERSION=$TAG" >> "$GITHUB_ENV"
 
           BUILD=true
           if [ "${{ github.event_name }}" != "workflow_dispatch" ] &&
-             gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > release.json 2>/dev/null; then
-            if jq -r '.body // ""' release.json | grep -Fq "Morphe Patch ${TAG} Changelog"; then
+             gh api "/repos/${GITHUB_REPOSITORY}/releases" --paginate > releases.json 2>/dev/null; then
+            if jq -r '.[].body // ""' releases.json |
+               grep -Fq "Morphe Patch ${TAG} Changelog"; then
               BUILD=false
             fi
           fi
-          echo "${BUILD_FLAG}=$BUILD" >> "$GITHUB_ENV"
+          echo "BUILD_STABLE=$BUILD" >> "$GITHUB_ENV"
 
-      - name: Build
+      - name: Build Stable
         if: env.BUILD_STABLE == 'true'
-        shell: bash
         run: |
           set -e
           node scripts/download_youtube.js "$VERSION"
           INPUT="$(find . -type f -name '*.apk' ! -path './.git/*' | head -n 1)"
           test -n "$INPUT"
-          curl -fsSL --retry 5 -H "User-Agent: GitHubActions" \
-            "$(curl -fsSL --retry 5 -H "Accept: application/vnd.github+json" \
+
+          URL="$(curl -fsSL --retry 5 \
             "https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest" |
-            jq -r '.assets[] | select(.name | endswith("-all.jar")) | .browser_download_url' | head -n 1)" \
-            -o morphe-cli.jar
+            jq -r '.assets[] | select(.name | endswith("-all.jar")) | .browser_download_url' |
+            head -n 1)"
+          test -n "$URL" && test "$URL" != null
+          curl -fsSL --retry 5 -H "User-Agent: GitHubActions" "$URL" -o morphe-cli.jar
           test -s morphe-cli.jar
+
           chmod +x scripts/build_nonroot.sh scripts/build_root.sh
-          scripts/build_nonroot.sh "$VERSION" "$INPUT" "$BUILD_TYPE"
-          scripts/build_root.sh "$VERSION" "$INPUT" "$BUILD_TYPE"
+          scripts/build_nonroot.sh "$VERSION" "$INPUT" stable
+          scripts/build_root.sh "$VERSION" "$INPUT" stable
+
           test -f keys/keystore.enc
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -105,9 +105,6 @@ jobs:
       contents: write
     env:
       KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
-      VERSION_FILE: version_dev.txt
-      BUILD_FLAG: BUILD_DEV
-      BUILD_TYPE: dev
     steps:
       - uses: actions/checkout@v4
 
@@ -120,12 +117,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y p7zip-full zipalign apksigner openssl jq
 
       - name: Prepare
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
           set -e
-          VERSION="$(tr -d '\r\n' < "$VERSION_FILE" | xargs)"
+          VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
           test -n "$VERSION"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
@@ -136,31 +130,35 @@ jobs:
           echo "MORPHE_VERSION=$TAG" >> "$GITHUB_ENV"
 
           BUILD=true
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ] &&
-             gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > release.json 2>/dev/null; then
-            if jq -r '.body // ""' release.json | grep -Fq "Morphe Patch ${TAG} Changelog"; then
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            gh api "/repos/${GITHUB_REPOSITORY}/releases" --paginate > releases.json 2>/dev/null || true
+            if jq -r '.[].body // ""' releases.json 2>/dev/null |
+               grep -Fq "Morphe Patch ${TAG} Changelog"; then
               BUILD=false
             fi
           fi
-          echo "${BUILD_FLAG}=$BUILD" >> "$GITHUB_ENV"
+          echo "BUILD_DEV=$BUILD" >> "$GITHUB_ENV"
 
-      - name: Build
+      - name: Build Dev
         if: env.BUILD_DEV == 'true'
-        shell: bash
         run: |
           set -e
           node scripts/download_youtube.js "$VERSION"
           INPUT="$(find . -type f -name '*.apk' ! -path './.git/*' | head -n 1)"
           test -n "$INPUT"
-          curl -fsSL --retry 5 -H "User-Agent: GitHubActions" \
-            "$(curl -fsSL --retry 5 -H "Accept: application/vnd.github+json" \
+
+          URL="$(curl -fsSL --retry 5 \
             "https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest" |
-            jq -r '.assets[] | select(.name | endswith("-all.jar")) | .browser_download_url' | head -n 1)" \
-            -o morphe-cli.jar
+            jq -r '.assets[] | select(.name | endswith("-all.jar")) | .browser_download_url' |
+            head -n 1)"
+          test -n "$URL" && test "$URL" != null
+          curl -fsSL --retry 5 -H "User-Agent: GitHubActions" "$URL" -o morphe-cli.jar
           test -s morphe-cli.jar
+
           chmod +x scripts/build_nonroot.sh scripts/build_root.sh
-          scripts/build_nonroot.sh "$VERSION" "$INPUT" "$BUILD_TYPE"
-          scripts/build_root.sh "$VERSION" "$INPUT" "$BUILD_TYPE"
+          scripts/build_nonroot.sh "$VERSION" "$INPUT" dev
+          scripts/build_root.sh "$VERSION" "$INPUT" dev
+
           test -f keys/keystore.enc
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -179,104 +177,73 @@ jobs:
   release:
     name: Create Release
     needs: [stable, dev]
-    if: always()
+    if: always() && (needs.stable.result == 'success' || needs.dev.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download artifacts
-        if: needs.stable.result == 'success' || needs.dev.result == 'success'
+      - name: Download Stable
+        if: needs.stable.result == 'success'
         uses: actions/download-artifact@v4
         with:
-          pattern: youtube-morphe-*
+          name: youtube-morphe-stable
           path: release
-          merge-multiple: true
 
-      - name: Prepare release
+      - name: Download Dev
+        if: needs.dev.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: youtube-morphe-dev
+          path: release
+
+      - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
           set -e
+
           MAIN_VERSION="$(tr -d '\r\n' < version.txt | xargs)"
           DEV_VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
-          MAIN_MORPHE="$(curl -fsSL "https://api.github.com/repos/${MORPHE_REPO}/releases/latest" | jq -r '.tag_name')"
-          DEV_MORPHE="$(curl -fsSL "https://api.github.com/repos/${MORPHE_REPO}/releases?per_page=100" |
+          MORPHE_MAIN="$(curl -fsSL "$GITHUB_API/repos/${MORPHE_REPO}/releases/latest" 2>/dev/null || true)"
+          MORPHE_MAIN="$(curl -fsSL "https://api.github.com/repos/${MORPHE_REPO}/releases/latest" | jq -r '.tag_name')"
+          MORPHE_DEV="$(curl -fsSL "https://api.github.com/repos/${MORPHE_REPO}/releases?per_page=100" |
             jq -r '[.[] | select(.prerelease == true) | .tag_name][0]')"
-          MAIN_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MAIN_MORPHE}"
-          DEV_URL="https://github.com/${MORPHE_REPO}/releases/tag/${DEV_MORPHE}"
 
-          if gh api "/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > release.json 2>/dev/null; then
-            jq -r '.body // ""' release.json > release_notes.txt
-          else
-            : > release_notes.txt
-          fi
+          RUN_TAG="youtube-morphe-${GITHUB_RUN_ID}"
+          RUN_TIME="$(date -u '+%Y-%m-%d %H:%M UTC')"
+          NAME="YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION} - ${RUN_TIME}"
 
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          p = Path("release_notes.txt")
-          t = p.read_text() if p.exists() else ""
-          t = re.sub(r'(?ms)^## Morphe Patch.*?(?=^## |\Z)', '', t)
-          t = re.sub(r'(?ms)^## MicroG.*?(?=^## |\Z)', '', t)
-          p.write_text(t.strip() + "\n")
-          PY
+          {
+            echo "## YouTube"
+            echo "- Stable: ${MAIN_VERSION}"
+            echo "- Dev: ${DEV_VERSION}"
+            echo
+            echo "## Morphe Patch"
+            echo "- Stable: ${MORPHE_MAIN}"
+            echo "- Dev: ${MORPHE_DEV}"
+            echo
+            echo "## Build"
+            echo "- Stable Non-root"
+            echo "- Stable Root Magisk"
+            echo "- Dev Non-root"
+            echo "- Dev Root Magisk"
+            echo
+            echo "## MicroG"
+            echo "MicroG is required for **YouTube Non-root**."
+            echo
+            echo "${MICROG_URL}"
+            echo
+            echo "Build: #${GITHUB_RUN_NUMBER}"
+          } > release_notes.txt
 
-          cat >> release_notes.txt <<EOF
+          gh release create "$RUN_TAG" \
+            --title "$NAME" \
+            --notes-file release_notes.txt \
+            release/*.apk release/*.zip
 
-          ## Morphe Patch
-
-          ### Stable
-          **${MAIN_MORPHE}**
-          [Morphe Patch ${MAIN_MORPHE} Changelog](${MAIN_URL})
-
-          ### Dev
-          **${DEV_MORPHE}**
-          [Morphe Patch ${DEV_MORPHE} Changelog](${DEV_URL})
-
-          ## MicroG
-          MicroG is required for **YouTube Non-root**.
-          [Download MicroG from MorpheApp/MicroG-RE](${MICROG_URL})
-
-          ## YouTube
-          - Stable: ${MAIN_VERSION}
-          - Dev: ${DEV_VERSION}
-
-          ## Build
-          - Stable Non-root
-          - Stable Root Magisk
-          - Dev Non-root
-          - Dev Root Magisk
-          EOF
-
-          NOTES_JSON="$(jq -Rs . < release_notes.txt)"
-          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases"
-          CODE="$(curl -s -o release.json -w '%{http_code}' -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${GH_TOKEN}" "$API/tags/${RELEASE_TAG}")"
-
-          NAME="YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION}"
-          if [ "$CODE" = 200 ]; then
-            ID="$(jq -r '.id' release.json)"
-            curl -fsSL -X PATCH -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${GH_TOKEN}" -H "Content-Type: application/json" \
-              "$API/$ID" -d "{\"name\":\"$NAME\",\"body\":$NOTES_JSON}"
-          elif [ "$CODE" = 404 ]; then
-            curl -fsSL -X POST -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer ${GH_TOKEN}" -H "Content-Type: application/json" \
-              "$API" -d "{\"tag_name\":\"${RELEASE_TAG}\",\"name\":\"$NAME\",\"body\":$NOTES_JSON,\"draft\":false,\"prerelease\":false}"
-          else
-            cat release.json
-            exit 1
-          fi
-
-      - name: Upload APK / ZIP
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          find release -type f \( -name '*.apk' -o -name '*.zip' \) -print0 |
-          while IFS= read -r -d '' f; do gh release upload "$RELEASE_TAG" "$f" --clobber; done
+          echo "RELEASE_TAG=$RUN_TAG" >> "$GITHUB_ENV"
 
   cleanup:
     name: Cleanup
@@ -287,28 +254,38 @@ jobs:
       contents: write
       actions: write
     steps:
-      - name: Cleanup releases, tags and workflow runs
+      - name: Cleanup old releases and tags
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
           set -e
           API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
-          H=(-H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GH_TOKEN}")
+          AUTH=(-H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GH_TOKEN}")
 
-          curl -fsSL "${H[@]}" "$API/releases?per_page=100" |
+          curl -fsSL "${AUTH[@]}" "$API/releases?per_page=100" |
             jq -r 'sort_by(.published_at // .created_at) | reverse | .[3:][] | "\(.id)|\(.tag_name)"' |
           while IFS='|' read -r id tag; do
-            curl -fsSL -X DELETE "${H[@]}" "$API/releases/$id"
-            curl -s -X DELETE "${H[@]}" "$API/git/refs/tags/$tag" >/dev/null || true
+            [ -z "$id" ] && continue
+            curl -fsSL -X DELETE "${AUTH[@]}" "$API/releases/$id"
+            curl -s -X DELETE "${AUTH[@]}" "$API/git/refs/tags/$tag" >/dev/null || true
           done
 
-          WF="$(curl -fsSL "${H[@]}" "$API/actions/workflows?per_page=100" |
-            jq -r '.workflows[] | select(.path == ".github/workflows/patch.yml") | .id' | head -n1)"
+      - name: Cleanup old workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          AUTH=(-H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GH_TOKEN}")
+
+          WF="$(curl -fsSL "${AUTH[@]}" "$API/actions/workflows?per_page=100" |
+            jq -r '.workflows[] | select(.path == ".github/workflows/patch.yml") | .id' |
+            head -n 1)"
           test -n "$WF" && test "$WF" != null
 
-          curl -fsSL "${H[@]}" "$API/actions/workflows/$WF/runs?per_page=100" |
+          curl -fsSL "${AUTH[@]}" \
+            "$API/actions/workflows/$WF/runs?per_page=100" |
             jq -r '.workflow_runs | sort_by(.created_at) | reverse | .[3:][] | .id' |
           while read -r id; do
-            [ -z "$id" ] || curl -s -X DELETE "${H[@]}" "$API/actions/runs/$id" >/dev/null
+            [ -z "$id" ] || curl -s -X DELETE "${AUTH[@]}" "$API/actions/runs/$id" >/dev/null
           done
