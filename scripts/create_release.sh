@@ -1,17 +1,31 @@
 #!/usr/bin/env bash
 set -e
+
 TYPE="$1"
 VERSION="$2"
+
 MORPHE_REPO="${MORPHE_REPO:-MorpheApp/morphe-patches}"
 MICROG_URL="${MICROG_URL:-https://github.com/MorpheApp/MicroG-RE/releases}"
-test -n "$MORPHE_VERSION"
+
+MORPHE_VERSION="${MORPHE_VERSION}"
+
+if [ -z "$MORPHE_VERSION" ]; then
+    echo "ERROR: MORPHE_VERSION is empty"
+    exit 1
+fi
 
 if [ "$TYPE" = "stable" ]; then
-  RELEASE_TAG="youtube-morphe-${MORPHE_VERSION}-${VERSION}"
-  TITLE="YouTube Morphe Stable ${VERSION}"
+
+    RELEASE_TAG="youtube-morphe-${MORPHE_VERSION}-${VERSION}"
+
+    TITLE="YouTube Morphe Stable ${VERSION}"
+
 else
-  RELEASE_TAG="youtube-morphe-${MORPHE_VERSION}-${VERSION}-dev"
-  TITLE="YouTube Morphe Dev ${VERSION}"
+
+    RELEASE_TAG="youtube-morphe-${MORPHE_VERSION}-${VERSION}-dev"
+
+    TITLE="YouTube Morphe Dev ${VERSION}"
+
 fi
 
 MORPHE_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_VERSION}"
@@ -42,9 +56,32 @@ MicroG is required for **YouTube Non-root**.
 - Root Magisk
 EOF
 
-gh release create "$RELEASE_TAG" --title "$TITLE" --notes-file release_notes.md --target "${GITHUB_SHA}"
+echo "Creating NEW release:"
+echo "$RELEASE_TAG"
 
-find . -type f \( -name "*.apk" -o -name "*.zip" \) ! -path "./.git/*" -print0 |
+gh release create \
+    "$RELEASE_TAG" \
+    --title "$TITLE" \
+    --notes-file release_notes.md \
+    --target "${GITHUB_SHA}"
+
+find . \
+    -type f \
+    \( \
+      -name "*.apk" \
+      -o \
+      -name "*.zip" \
+    \) \
+    ! -path "./.git/*" \
+    -print0 |
 while IFS= read -r -d '' FILE; do
-  gh release upload "$RELEASE_TAG" "$FILE"
+
+    echo "Uploading: $FILE"
+
+    gh release upload \
+        "$RELEASE_TAG" \
+        "$FILE"
+
 done
+
+echo "Release created: $RELEASE_TAG"
