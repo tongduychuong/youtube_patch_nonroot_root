@@ -4,12 +4,14 @@ name: YouTube Morphe Patch
   workflow_dispatch:
     inputs:
       force_build:
-        description: Force build Stable + Dev
+        description: "Force build Stable + Dev"
         required: false
         type: boolean
         default: true
 
   schedule:
+    # 05:00 Vietnam time (UTC+7)
+    # 22:00 UTC
     - cron: "0 22 * * *"
 
 permissions:
@@ -22,21 +24,50 @@ env:
 
 jobs:
 
+  # ==========================================================
+  # STABLE
+  # ==========================================================
+
   stable:
-    name: Stable
+    name: Build Stable
     runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
+    permissions:
+      contents: write
 
-      - uses: actions/setup-java@v4
+    env:
+      KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
+
+    steps:
+
+      # ======================================================
+      # CHECKOUT
+      # ======================================================
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ======================================================
+      # JAVA
+      # ======================================================
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
+      # ======================================================
+      # TOOLS
+      # ======================================================
+
       - name: Install tools
+        shell: bash
         run: |
+          set -e
+
           sudo apt-get update
+
           sudo apt-get install -y \
             p7zip-full \
             zipalign \
@@ -44,25 +75,178 @@ jobs:
             openssl \
             jq
 
-      - name: Build Stable
-        env:
-          KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
-          GH_TOKEN: ${{ github.token }}
+      # ======================================================
+      # YOUTUBE VERSION
+      # ======================================================
+
+      - name: Read YouTube Stable version
+        shell: bash
         run: |
-          chmod +x scripts/*.sh
+          set -e
 
-          scripts/check_patch.sh stable
+          test -f version.txt
 
-          if [ "$BUILD" != "true" ]; then
-            echo "Stable patch already built."
-            exit 0
+          VERSION="$(tr -d '\r\n' < version.txt | xargs)"
+
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: version.txt is empty"
+            exit 1
           fi
 
-          VERSION="$(cat version.txt | tr -d '\r\n' | xargs)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          echo "YouTube Stable: $VERSION"
+
+      # ======================================================
+      # MORPHE STABLE VERSION
+      # ======================================================
+
+      - name: Get Morphe Stable version
+        shell: bash
+        run: |
+          set -e
+
+          RESPONSE="$(
+            curl -fsSL \
+              --retry 5 \
+              --retry-delay 2 \
+              -H "Accept: application/vnd.github+json" \
+              -H "User-Agent: GitHubActions" \
+              "https://api.github.com/repos/${MORPHE_REPO}/releases/latest"
+          )"
+
+          MORPHE_VERSION="$(
+            echo "$RESPONSE" |
+            jq -r '.tag_name'
+          )"
+
+          if [ -z "$MORPHE_VERSION" ] || \
+             [ "$MORPHE_VERSION" = "null" ]; then
+            echo "ERROR: Morphe Stable version not found"
+            exit 1
+          fi
+
+          echo "MORPHE_VERSION=$MORPHE_VERSION" >> "$GITHUB_ENV"
+
+          echo "Morphe Stable: $MORPHE_VERSION"
+
+      # ======================================================
+      # CREATE UNIQUE RELEASE TAG
+      # ======================================================
+
+      - name: Set Stable Release Tag
+        shell: bash
+        run: |
+          set -e
+
+          RELEASE_TAG="youtube-morphe-${MORPHE_VERSION}-${VERSION}"
+
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+
+          echo "======================================"
+          echo "Stable Release"
+          echo "$RELEASE_TAG"
+          echo "======================================"
+
+      # ======================================================
+      # CHECK MORPHE PATCH
+      # SEARCH ALL RELEASES
+      # ======================================================
+
+      - name: Check Stable patch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          # --------------------------------------------------
+          # MANUAL RUN = ALWAYS BUILD
+          # --------------------------------------------------
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+
+            echo "======================================"
+            echo "MANUAL RUN"
+            echo "Force Stable build: YES"
+            echo "======================================"
+
+            echo "BUILD_STABLE=true" >> "$GITHUB_ENV"
+
+            exit 0
+
+          fi
+
+          # --------------------------------------------------
+          # GET ALL RELEASES
+          # --------------------------------------------------
+
+          RESPONSE="$(
+            gh api \
+              --paginate \
+              "/repos/${GITHUB_REPOSITORY}/releases?per_page=100"
+          )"
+
+          FOUND="$(
+            echo "$RESPONSE" |
+            jq -r '
+              .[]
+              | .body // ""
+            ' |
+            grep -F \
+              "Morphe Patch ${MORPHE_VERSION} Changelog" |
+            head -n 1 || true
+          )"
+
+          if [ -n "$FOUND" ]; then
+
+            echo "======================================"
+            echo "PATCH ALREADY BUILT"
+            echo "======================================"
+
+            echo "Morphe: $MORPHE_VERSION"
+            echo "BUILD_STABLE=false"
+
+            echo "BUILD_STABLE=false" >> "$GITHUB_ENV"
+
+          else
+
+            echo "======================================"
+            echo "NEW PATCH"
+            echo "======================================"
+
+            echo "Morphe: $MORPHE_VERSION"
+            echo "BUILD_STABLE=true"
+
+            echo "BUILD_STABLE=true" >> "$GITHUB_ENV"
+
+          fi
+
+      # ======================================================
+      # DOWNLOAD YOUTUBE
+      # ======================================================
+
+      - name: Download YouTube
+        if: env.BUILD_STABLE == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          test -f scripts/download_youtube.js
 
           node scripts/download_youtube.js "$VERSION"
 
-          APK="$(
+      # ======================================================
+      # FIND APK
+      # ======================================================
+
+      - name: Find YouTube APK
+        if: env.BUILD_STABLE == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          INPUT="$(
             find . \
               -type f \
               -name "*.apk" \
@@ -70,37 +254,246 @@ jobs:
             head -n 1
           )"
 
-          test -n "$APK"
+          if [ -z "$INPUT" ]; then
+            echo "ERROR: YouTube APK not found"
+            exit 1
+          fi
+
+          echo "INPUT=$INPUT" >> "$GITHUB_ENV"
+
+          echo "Input APK: $INPUT"
+
+      # ======================================================
+      # MORPHE CLI
+      # ======================================================
+
+      - name: Download Morphe CLI
+        if: env.BUILD_STABLE == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          RESPONSE="$(
+            curl -fsSL \
+              --retry 5 \
+              --retry-delay 2 \
+              -H "Accept: application/vnd.github+json" \
+              -H "User-Agent: GitHubActions" \
+              "https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
+          )"
+
+          URL="$(
+            echo "$RESPONSE" |
+            jq -r '
+              .assets[]
+              | select(.name | endswith("-all.jar"))
+              | .browser_download_url
+            ' |
+            head -n 1
+          )"
+
+          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
+            echo "ERROR: Morphe CLI not found"
+            exit 1
+          fi
+
+          curl -fL \
+            --retry 5 \
+            --retry-delay 2 \
+            -H "User-Agent: GitHubActions" \
+            "$URL" \
+            -o morphe-cli.jar
+
+          test -s morphe-cli.jar
+
+      # ======================================================
+      # BUILD NON ROOT
+      # ======================================================
+
+      - name: Build Stable Non Root
+        if: env.BUILD_STABLE == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          chmod +x scripts/build_nonroot.sh
 
           scripts/build_nonroot.sh \
             "$VERSION" \
-            "$APK" \
+            "$INPUT" \
             stable
+
+      # ======================================================
+      # BUILD ROOT
+      # ======================================================
+
+      - name: Build Stable Root
+        if: env.BUILD_STABLE == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          chmod +x scripts/build_root.sh
 
           scripts/build_root.sh \
             "$VERSION" \
-            "$APK" \
+            "$INPUT" \
             stable
 
-          scripts/create_release.sh \
-            stable \
-            "$VERSION"
+      # ======================================================
+      # CHECK KEYSTORE
+      # ======================================================
+
+      - name: Check encrypted keystore
+        if: env.BUILD_STABLE == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          test -f keys/keystore.enc
+
+          echo "Encrypted keystore found."
+
+      # ======================================================
+      # CREATE NEW STABLE RELEASE
+      # ======================================================
+
+      - name: Create Stable Release
+        if: env.BUILD_STABLE == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          CHANGELOG="stable_changelog.md"
+
+          MORPHE_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_VERSION}"
+
+          cat > "$CHANGELOG" <<EOF
+          # YouTube Morphe Stable
+
+          ## Morphe Patch
+
+          **${MORPHE_VERSION}**
+
+          [Morphe Patch ${MORPHE_VERSION} Changelog](${MORPHE_URL})
+
+          ## MicroG
+
+          MicroG is required for **YouTube Non-root**.
+
+          [Download MicroG for YouTube Non-root](${MICROG_URL})
+
+          ## YouTube
+
+          - Version: ${VERSION}
+          - Type: Stable
+
+          ## Build
+
+          - Stable Non-root
+          - Stable Root Magisk
+          EOF
+
+          echo "Creating NEW Release:"
+          echo "$RELEASE_TAG"
+
+          gh release create \
+            "$RELEASE_TAG" \
+            --title "YouTube Morphe Stable ${VERSION}" \
+            --notes-file "$CHANGELOG" \
+            --target "${GITHUB_SHA}"
+
+      # ======================================================
+      # UPLOAD STABLE FILES
+      # ONLY APK + ZIP
+      # NO SHA256
+      # ======================================================
+
+      - name: Upload Stable Release files
+        if: env.BUILD_STABLE == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          FOUND_FILES=0
+
+          while IFS= read -r -d '' FILE; do
+
+            FOUND_FILES=1
+
+            echo "Uploading:"
+            echo "$FILE"
+
+            gh release upload \
+              "$RELEASE_TAG" \
+              "$FILE"
+
+          done < <(
+            find . \
+              -type f \
+              \( \
+                -name "*.apk" \
+                -o \
+                -name "*.zip" \
+              \) \
+              ! -path "./.git/*" \
+              -print0
+          )
+
+          if [ "$FOUND_FILES" = "0" ]; then
+            echo "ERROR: No APK or ZIP found"
+            exit 1
+          fi
+
+
+  # ==========================================================
+  # DEV
+  # ==========================================================
 
   dev:
-    name: Dev
+    name: Build Dev
     runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
+    permissions:
+      contents: write
 
-      - uses: actions/setup-java@v4
+    env:
+      KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
+
+    steps:
+
+      # ======================================================
+      # CHECKOUT
+      # ======================================================
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ======================================================
+      # JAVA
+      # ======================================================
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
+      # ======================================================
+      # TOOLS
+      # ======================================================
+
       - name: Install tools
+        shell: bash
         run: |
+          set -e
+
           sudo apt-get update
+
           sudo apt-get install -y \
             p7zip-full \
             zipalign \
@@ -108,25 +501,184 @@ jobs:
             openssl \
             jq
 
-      - name: Build Dev
-        env:
-          KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
-          GH_TOKEN: ${{ github.token }}
+      # ======================================================
+      # YOUTUBE DEV VERSION
+      # ======================================================
+
+      - name: Read YouTube Dev version
+        shell: bash
         run: |
-          chmod +x scripts/*.sh
+          set -e
 
-          scripts/check_patch.sh dev
+          test -f version_dev.txt
 
-          if [ "$BUILD" != "true" ]; then
-            echo "Dev patch already built."
-            exit 0
+          VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
+
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: version_dev.txt is empty"
+            exit 1
           fi
 
-          VERSION="$(cat version_dev.txt | tr -d '\r\n' | xargs)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          echo "YouTube Dev: $VERSION"
+
+      # ======================================================
+      # MORPHE DEV VERSION
+      # ======================================================
+
+      - name: Get Morphe Dev version
+        shell: bash
+        run: |
+          set -e
+
+          RESPONSE="$(
+            curl -fsSL \
+              --retry 5 \
+              --retry-delay 2 \
+              -H "Accept: application/vnd.github+json" \
+              -H "User-Agent: GitHubActions" \
+              "https://api.github.com/repos/${MORPHE_REPO}/releases?per_page=100"
+          )"
+
+          MORPHE_VERSION="$(
+            echo "$RESPONSE" |
+            jq -r '
+              [
+                .[]
+                | select(.prerelease == true)
+              ]
+              | sort_by(.published_at // .created_at)
+              | reverse
+              | .[0]
+              | .tag_name
+            '
+          )"
+
+          if [ -z "$MORPHE_VERSION" ] || \
+             [ "$MORPHE_VERSION" = "null" ]; then
+            echo "ERROR: Morphe Dev version not found"
+            exit 1
+          fi
+
+          echo "MORPHE_VERSION=$MORPHE_VERSION" >> "$GITHUB_ENV"
+
+          echo "Morphe Dev: $MORPHE_VERSION"
+
+      # ======================================================
+      # UNIQUE DEV RELEASE TAG
+      # ======================================================
+
+      - name: Set Dev Release Tag
+        shell: bash
+        run: |
+          set -e
+
+          RELEASE_TAG="youtube-morphe-${MORPHE_VERSION}-${VERSION}-dev"
+
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+
+          echo "======================================"
+          echo "Dev Release"
+          echo "$RELEASE_TAG"
+          echo "======================================"
+
+      # ======================================================
+      # CHECK DEV PATCH
+      # ======================================================
+
+      - name: Check Dev patch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          # --------------------------------------------------
+          # MANUAL RUN = ALWAYS BUILD
+          # --------------------------------------------------
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+
+            echo "======================================"
+            echo "MANUAL RUN"
+            echo "Force Dev build: YES"
+            echo "======================================"
+
+            echo "BUILD_DEV=true" >> "$GITHUB_ENV"
+
+            exit 0
+
+          fi
+
+          # --------------------------------------------------
+          # SEARCH ALL RELEASES
+          # --------------------------------------------------
+
+          RESPONSE="$(
+            gh api \
+              --paginate \
+              "/repos/${GITHUB_REPOSITORY}/releases?per_page=100"
+          )"
+
+          FOUND="$(
+            echo "$RESPONSE" |
+            jq -r '
+              .[]
+              | .body // ""
+            ' |
+            grep -F \
+              "Morphe Patch ${MORPHE_VERSION} Changelog" |
+            head -n 1 || true
+          )"
+
+          if [ -n "$FOUND" ]; then
+
+            echo "======================================"
+            echo "PATCH ALREADY BUILT"
+            echo "======================================"
+
+            echo "Morphe: $MORPHE_VERSION"
+
+            echo "BUILD_DEV=false" >> "$GITHUB_ENV"
+
+          else
+
+            echo "======================================"
+            echo "NEW DEV PATCH"
+            echo "======================================"
+
+            echo "Morphe: $MORPHE_VERSION"
+
+            echo "BUILD_DEV=true" >> "$GITHUB_ENV"
+
+          fi
+
+      # ======================================================
+      # DOWNLOAD YOUTUBE
+      # ======================================================
+
+      - name: Download YouTube Dev
+        if: env.BUILD_DEV == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          test -f scripts/download_youtube.js
 
           node scripts/download_youtube.js "$VERSION"
 
-          APK="$(
+      # ======================================================
+      # FIND APK
+      # ======================================================
+
+      - name: Find YouTube APK
+        if: env.BUILD_DEV == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          INPUT="$(
             find . \
               -type f \
               -name "*.apk" \
@@ -134,24 +686,208 @@ jobs:
             head -n 1
           )"
 
-          test -n "$APK"
+          if [ -z "$INPUT" ]; then
+            echo "ERROR: YouTube APK not found"
+            exit 1
+          fi
+
+          echo "INPUT=$INPUT" >> "$GITHUB_ENV"
+
+          echo "Input APK: $INPUT"
+
+      # ======================================================
+      # MORPHE CLI
+      # ======================================================
+
+      - name: Download Morphe CLI
+        if: env.BUILD_DEV == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          RESPONSE="$(
+            curl -fsSL \
+              --retry 5 \
+              --retry-delay 2 \
+              -H "Accept: application/vnd.github+json" \
+              -H "User-Agent: GitHubActions" \
+              "https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest"
+          )"
+
+          URL="$(
+            echo "$RESPONSE" |
+            jq -r '
+              .assets[]
+              | select(.name | endswith("-all.jar"))
+              | .browser_download_url
+            ' |
+            head -n 1
+          )"
+
+          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
+            echo "ERROR: Morphe CLI not found"
+            exit 1
+          fi
+
+          curl -fL \
+            --retry 5 \
+            --retry-delay 2 \
+            -H "User-Agent: GitHubActions" \
+            "$URL" \
+            -o morphe-cli.jar
+
+          test -s morphe-cli.jar
+
+      # ======================================================
+      # BUILD NON ROOT
+      # ======================================================
+
+      - name: Build Dev Non Root
+        if: env.BUILD_DEV == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          chmod +x scripts/build_nonroot.sh
 
           scripts/build_nonroot.sh \
             "$VERSION" \
-            "$APK" \
+            "$INPUT" \
             dev
+
+      # ======================================================
+      # BUILD ROOT
+      # ======================================================
+
+      - name: Build Dev Root
+        if: env.BUILD_DEV == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          chmod +x scripts/build_root.sh
 
           scripts/build_root.sh \
             "$VERSION" \
-            "$APK" \
+            "$INPUT" \
             dev
 
-          scripts/create_release.sh \
-            dev \
-            "$VERSION"
+      # ======================================================
+      # CHECK KEYSTORE
+      # ======================================================
+
+      - name: Check encrypted keystore
+        if: env.BUILD_DEV == 'true'
+        shell: bash
+        run: |
+          set -e
+
+          test -f keys/keystore.enc
+
+          echo "Encrypted keystore found."
+
+      # ======================================================
+      # CREATE NEW DEV RELEASE
+      # ======================================================
+
+      - name: Create Dev Release
+        if: env.BUILD_DEV == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          CHANGELOG="dev_changelog.md"
+
+          MORPHE_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_VERSION}"
+
+          cat > "$CHANGELOG" <<EOF
+          # YouTube Morphe Dev
+
+          ## Morphe Patch
+
+          **${MORPHE_VERSION}**
+
+          [Morphe Patch ${MORPHE_VERSION} Changelog](${MORPHE_URL})
+
+          ## MicroG
+
+          MicroG is required for **YouTube Non-root**.
+
+          [Download MicroG for YouTube Non-root](${MICROG_URL})
+
+          ## YouTube
+
+          - Version: ${VERSION}
+          - Type: Dev
+
+          ## Build
+
+          - Dev Non-root
+          - Dev Root Magisk
+          EOF
+
+          echo "Creating NEW Release:"
+          echo "$RELEASE_TAG"
+
+          gh release create \
+            "$RELEASE_TAG" \
+            --title "YouTube Morphe Dev ${VERSION}" \
+            --notes-file "$CHANGELOG" \
+            --prerelease \
+            --target "${GITHUB_SHA}"
+
+      # ======================================================
+      # UPLOAD DEV FILES
+      # ======================================================
+
+      - name: Upload Dev Release files
+        if: env.BUILD_DEV == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          FOUND_FILES=0
+
+          while IFS= read -r -d '' FILE; do
+
+            FOUND_FILES=1
+
+            echo "Uploading:"
+            echo "$FILE"
+
+            gh release upload \
+              "$RELEASE_TAG" \
+              "$FILE"
+
+          done < <(
+            find . \
+              -type f \
+              \( \
+                -name "*.apk" \
+                -o \
+                -name "*.zip" \
+              \) \
+              ! -path "./.git/*" \
+              -print0
+          )
+
+          if [ "$FOUND_FILES" = "0" ]; then
+            echo "ERROR: No APK or ZIP found"
+            exit 1
+          fi
+
+
+  # ==========================================================
+  # CLEANUP
+  # ==========================================================
 
   cleanup:
-    name: Cleanup
+    name: Cleanup Releases and Workflow Runs
+
     needs:
       - stable
       - dev
@@ -160,10 +896,260 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+      actions: write
+
     steps:
-      - name: Cleanup
+
+      - name: Install jq
+        shell: bash
+        run: |
+          set -e
+
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      # ======================================================
+      # CLEANUP RELEASES
+      # KEEP 3
+      # ======================================================
+
+      - name: Cleanup old releases and tags
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          chmod +x scripts/cleanup.sh
-          scripts/cleanup.sh
+          set -e
+
+          echo "======================================"
+          echo "RELEASE CLEANUP"
+          echo "Keep newest 3"
+          echo "======================================"
+
+          curl \
+            -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            > releases.json
+
+          jq '
+            sort_by(.published_at // .created_at)
+            | reverse
+          ' releases.json > releases_sorted.json
+
+          TOTAL="$(jq 'length' releases_sorted.json)"
+
+          echo "Total releases: $TOTAL"
+
+          if [ "$TOTAL" -le 3 ]; then
+
+            echo "Release count <= 3"
+            echo "Nothing to delete."
+
+          else
+
+            jq -r '
+              .[3:]
+              | .[]
+              | "\(.id)|\(.tag_name)"
+            ' releases_sorted.json |
+            while IFS='|' read -r RELEASE_ID TAG; do
+
+              [ -z "$RELEASE_ID" ] && continue
+
+              echo "--------------------------------------"
+              echo "Deleting Release"
+              echo "ID: $RELEASE_ID"
+              echo "TAG: $TAG"
+
+              HTTP_CODE="$(
+                curl \
+                  -s \
+                  -o /tmp/release_delete.txt \
+                  -w "%{http_code}" \
+                  -X DELETE \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}"
+              )"
+
+              if [ "$HTTP_CODE" = "204" ]; then
+
+                echo "Release deleted."
+
+              elif [ "$HTTP_CODE" = "404" ]; then
+
+                echo "Release already deleted."
+
+              else
+
+                echo "ERROR deleting Release."
+                echo "HTTP: $HTTP_CODE"
+
+                cat /tmp/release_delete.txt
+
+                exit 1
+
+              fi
+
+              # --------------------------------------------
+              # DELETE TAG
+              # --------------------------------------------
+
+              TAG_CODE="$(
+                curl \
+                  -s \
+                  -o /tmp/tag_delete.txt \
+                  -w "%{http_code}" \
+                  -X DELETE \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}"
+              )"
+
+              if [ "$TAG_CODE" = "204" ]; then
+
+                echo "Tag deleted."
+
+              elif [ "$TAG_CODE" = "404" ]; then
+
+                echo "Tag already deleted."
+
+              else
+
+                echo "WARNING: Tag delete HTTP $TAG_CODE"
+
+                cat /tmp/tag_delete.txt || true
+
+              fi
+
+            done
+
+          fi
+
+      # ======================================================
+      # CLEANUP WORKFLOW RUNS
+      # KEEP 3
+      # ======================================================
+
+      - name: Cleanup old workflow runs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "WORKFLOW CLEANUP"
+          echo "Keep newest 3"
+          echo "======================================"
+
+          WORKFLOW_ID="$(
+            curl \
+              -fsSL \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows?per_page=100" |
+            jq -r '
+              .workflows[]
+              | select(.path == ".github/workflows/patch.yml")
+              | .id
+            ' |
+            head -n 1
+          )"
+
+          if [ -z "$WORKFLOW_ID" ] || \
+             [ "$WORKFLOW_ID" = "null" ]; then
+
+            echo "ERROR: patch.yml workflow not found"
+            exit 1
+
+          fi
+
+          echo "Workflow ID: $WORKFLOW_ID"
+
+          curl \
+            -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs?per_page=100" \
+            > workflow_runs_response.json
+
+          jq '
+            .workflow_runs
+            | sort_by(.created_at)
+            | reverse
+          ' workflow_runs_response.json > workflow_runs.json
+
+          TOTAL="$(jq 'length' workflow_runs.json)"
+
+          echo "Total workflow runs: $TOTAL"
+
+          if [ "$TOTAL" -le 3 ]; then
+
+            echo "Workflow runs <= 3"
+            echo "Nothing to delete."
+
+          else
+
+            jq -r '
+              .[3:]
+              | .[].id
+            ' workflow_runs.json |
+            while IFS= read -r RUN_ID; do
+
+              [ -z "$RUN_ID" ] && continue
+
+              echo "--------------------------------------"
+              echo "Deleting workflow run: $RUN_ID"
+
+              HTTP_CODE="$(
+                curl \
+                  -s \
+                  -o /tmp/run_delete.txt \
+                  -w "%{http_code}" \
+                  -X DELETE \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+              )"
+
+              case "$HTTP_CODE" in
+
+                204)
+                  echo "Workflow run deleted."
+                  ;;
+
+                404)
+                  echo "Workflow run already deleted."
+                  ;;
+
+                403)
+                  echo "ERROR: Actions permission denied."
+                  cat /tmp/run_delete.txt
+                  exit 1
+                  ;;
+
+                *)
+                  echo "ERROR: HTTP $HTTP_CODE"
+                  cat /tmp/run_delete.txt
+                  exit 1
+                  ;;
+
+              esac
+
+            done
+
+          fi
+
+          echo "======================================"
+          echo "CLEANUP COMPLETE"
+          echo "======================================"
