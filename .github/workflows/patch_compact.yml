@@ -199,7 +199,7 @@ jobs:
         with:
           name: youtube-morphe-dev
           path: release
-          
+
       - name: Create Release
         env:
           GH_TOKEN: ${{ secrets.CUSTOM_PAT || github.token }}
@@ -224,7 +224,6 @@ jobs:
           RUN_TIME="$(date -u '+%Y-%m-%d %H:%M UTC')"
           NAME="YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION} - ${RUN_TIME}"
 
-          # Tạo file release notes an toàn bằng printf
           printf "## YouTube\n\n" > release_notes.txt
           printf -- "- Stable: %s\n" "$MAIN_VERSION" >> release_notes.txt
           printf -- "- Dev: %s\n\n" "$DEV_VERSION" >> release_notes.txt
@@ -261,7 +260,6 @@ jobs:
           API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
           AUTH=(-H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GH_TOKEN}")
 
-          # Xoá Release cũ (giữ lại 3 bản mới nhất)
           curl -fsSL "${AUTH[@]}" "$API/releases?per_page=100" |
             jq -r 'sort_by(.published_at // .created_at) | reverse | .[3:][] | "\(.id)|\(.tag_name)"' |
             while IFS='|' read -r id tag; do
@@ -272,10 +270,14 @@ jobs:
 
       - name: Cleanup old workflow runs
         env:
-          GH_TOKEN: ${{ secrets.CUSTOM_PAT || github.token }}
+          GH_TOKEN: ${{ secrets.CUSTOM_PAT }}
         run: |
           set -e
-          # Sử dụng GitHub CLI để xoá workflow runs cũ (giữ lại 3 lượt chạy mới nhất)
+          if [ -z "${{ secrets.CUSTOM_PAT }}" ]; then
+            echo "Chưa cấu hình secret CUSTOM_PAT. Bỏ qua bước xoá workflow runs."
+            exit 0
+          fi
+
           RUNS_TO_DELETE=$(gh run list \
             --workflow "patch.yml" \
             --json databaseId,createdAt \
