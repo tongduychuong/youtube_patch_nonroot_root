@@ -87,7 +87,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add keys/keystore.enc
-          git diff --cached --quiet || (git commit -m "Update encrypted YouTube keystore" && git push)
+          git diff --cached --quiet || (git pull --rebase origin main && git commit -m "Update encrypted YouTube keystore (Stable)" && git push)
 
       - uses: actions/upload-artifact@v4
         if: env.BUILD_STABLE == 'true'
@@ -165,7 +165,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add keys/keystore.enc
-          git diff --cached --quiet || (git commit -m "Update encrypted YouTube keystore" && git push)
+          git diff --cached --quiet || (git pull --rebase origin main && git commit -m "Update encrypted YouTube keystore (Dev)" && git push)
 
       - uses: actions/upload-artifact@v4
         if: env.BUILD_DEV == 'true'
@@ -202,7 +202,7 @@ jobs:
 
       - name: Create Release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CUSTOM_PAT || github.token }}
         run: |
           set -e
 
@@ -220,33 +220,36 @@ jobs:
           MAIN_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_MAIN}"
           DEV_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_DEV}"
 
-          RUN_TAG="youtube-morphe-${GITHUB_RUN_ID}"
+          RUN_TAG="v${MAIN_VERSION}-${GITHUB_RUN_ID}"
           RUN_TIME="$(date -u '+%Y-%m-%d %H:%M UTC')"
           NAME="YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION} - ${RUN_TIME}"
 
+          # Xoá khoảng trắng ở đầu các dòng Markdown
           cat > release_notes.txt <<EOF
-          ## YouTube
+## YouTube
 
-          - Stable: ${MAIN_VERSION}
-          - Dev: ${DEV_VERSION}
+- Stable: ${MAIN_VERSION}
+- Dev: ${DEV_VERSION}
 
-          ## Morphe Patch
+## Morphe Patch
 
-          - Stable: [${MORPHE_MAIN}](${MAIN_URL})
-          - Dev: [${MORPHE_DEV}](${DEV_URL})
+- Stable: [${MORPHE_MAIN}](${MAIN_URL})
+- Dev: [${MORPHE_DEV}](${DEV_URL})
 
-          ## MicroG
+## MicroG
 
-          MicroG is required for **YouTube Non-root**.
+MicroG is required for **YouTube Non-root**.
 
-          [Download MicroG from MorpheApp/MicroG-RE](${MICROG_URL})
+[Download MicroG from MorpheApp/MicroG-RE](${MICROG_URL})
+EOF
+
+          # Tìm các file thực tế có trong thư mục release
+          FILES=$(find release -type f \( -name "*.apk" -o -name "*.zip" \))
 
           gh release create "$RUN_TAG" \
             --title "$NAME" \
             --notes-file release_notes.txt \
-            release/*.apk release/*.zip
-
-          echo "RELEASE_TAG=$RUN_TAG" >> "$GITHUB_ENV"
+            $FILES
 
   cleanup:
     name: Cleanup
@@ -257,39 +260,34 @@ jobs:
       contents: write
       actions: write
     steps:
-      - name: Cleanup old releases and tags
+      - uses: actions/checkout@v4
+
+      - name: Cleanup old releases, tags & workflows
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CUSTOM_PAT || github.token }}
         run: |
           set -e
           API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
           AUTH=(-H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GH_TOKEN}")
 
+          # 1. Xoá Release cũ (giữ lại 3 bản mới nhất)
           curl -fsSL "${AUTH[@]}" "$API/releases?per_page=100" |
             jq -r 'sort_by(.published_at // .created_at) | reverse | .[3:][] | "\(.id)|\(.tag_name)"' |
-          while IFS='|' read -r id tag; do
-            [ -z "$id" ] && continue
-            curl -fsSL -X DELETE "${AUTH[@]}" "$API/releases/$id"
-            curl -s -X DELETE "${AUTH[@]}" "$API/git/refs/tags/$tag" >/dev/null || true
-          done
+            while IFS='|' read -r id tag; do
+              [ -z "$id" ] && continue
+              curl -fsSL -X DELETE "${AUTH[@]}" "$API/releases/$id"
+              curl -s -X DELETE "${AUTH[@]}" "$API/git/refs/tags/$tag" >/dev/null || true
+            done
 
-      - name: Cleanup old workflow runs
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -e
-          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
-          AUTH=(-H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GH_TOKEN}")
+          # 2. Xoá Workflow Runs cũ (giữ lại 3 bản mới nhất)
+          WF_ID="$(curl -fsSL "${AUTH[@]}" "$API/actions/workflows" |
+            jq -r '.workflows[] | select(.path | contains("patch.yml")) | .id' | head -n 1)"
 
-          WF="$(curl -fsSL "${AUTH[@]}" "$API/actions/workflows?per_page=100" |
-            jq -r '.workflows[] | select(.path == ".github/workflows/patch.yml") | .id' |
-            head -n 1)"
-
-          test -n "$WF" && test "$WF" != null
-
-          curl -fsSL "${AUTH[@]}" \
-            "$API/actions/workflows/$WF/runs?per_page=100" |
-            jq -r '.workflow_runs | sort_by(.created_at) | reverse | .[3:][] | .id' |
-          while read -r id; do
-            [ -z "$id" ] || curl -s -X DELETE "${AUTH[@]}" "$API/actions/runs/$id" >/dev/null
-          done
+          if [ -n "$WF_ID" ] && [ "$WF_ID" != "null" ]; then
+            curl -fsSL "${AUTH[@]}" "$API/actions/workflows/$WF_ID/runs?per_page=100" |
+              jq -r '.workflow_runs | sort_by(.created_at) | reverse | .[3:][] | .id' |
+              while read -r run_id; do
+                [ -z "$run_id" ] && continue
+                curl -s -X DELETE "${AUTH[@]}" "$API/actions/runs/$run_id" >/dev/null || true
+              done
+          fi
