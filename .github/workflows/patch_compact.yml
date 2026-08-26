@@ -199,7 +199,7 @@ jobs:
         with:
           name: youtube-morphe-dev
           path: release
-
+          
       - name: Create Release
         env:
           GH_TOKEN: ${{ secrets.CUSTOM_PAT || github.token }}
@@ -224,23 +224,16 @@ jobs:
           RUN_TIME="$(date -u '+%Y-%m-%d %H:%M UTC')"
           NAME="YouTube Morphe ${MAIN_VERSION} / DEV ${DEV_VERSION} - ${RUN_TIME}"
 
-          cat > release_notes.txt <<EOF
-              ## YouTube
-              
-              - Stable: ${MAIN_VERSION}
-              - Dev: ${DEV_VERSION}
-              
-              ## Morphe Patch
-              
-              - Stable: [${MORPHE_MAIN}](${MAIN_URL})
-              - Dev: [${MORPHE_DEV}](${DEV_URL})
-
-              ## MicroG
-
-              MicroG is required for **YouTube Non-root**.
-
-              [Download MicroG from MorpheApp/MicroG-RE](${MICROG_URL})
-            EOF
+          # Tạo file release notes an toàn bằng printf
+          printf "## YouTube\n\n" > release_notes.txt
+          printf -- "- Stable: %s\n" "$MAIN_VERSION" >> release_notes.txt
+          printf -- "- Dev: %s\n\n" "$DEV_VERSION" >> release_notes.txt
+          printf "## Morphe Patch\n\n" >> release_notes.txt
+          printf -- "- Stable: [%s](%s)\n" "$MORPHE_MAIN" "$MAIN_URL" >> release_notes.txt
+          printf -- "- Dev: [%s](%s)\n\n" "$MORPHE_DEV" "$DEV_URL" >> release_notes.txt
+          printf "## MicroG\n\n" >> release_notes.txt
+          printf "MicroG is required for **YouTube Non-root**.\n\n" >> release_notes.txt
+          printf "[Download MicroG from MorpheApp/MicroG-RE](%s)\n" "$MICROG_URL" >> release_notes.txt
 
           FILES=$(find release -type f \( -name "*.apk" -o -name "*.zip" \))
 
