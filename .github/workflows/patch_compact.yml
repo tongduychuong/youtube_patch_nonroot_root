@@ -226,22 +226,22 @@ jobs:
 
           # Xoá khoảng trắng ở đầu các dòng Markdown
           cat > release_notes.txt <<EOF
-## YouTube
-
-- Stable: ${MAIN_VERSION}
-- Dev: ${DEV_VERSION}
-
-## Morphe Patch
-
-- Stable: [${MORPHE_MAIN}](${MAIN_URL})
-- Dev: [${MORPHE_DEV}](${DEV_URL})
-
-## MicroG
-
-MicroG is required for **YouTube Non-root**.
-
-[Download MicroG from MorpheApp/MicroG-RE](${MICROG_URL})
-EOF
+            ## YouTube
+            
+            - Stable: ${MAIN_VERSION}
+            - Dev: ${DEV_VERSION}
+            
+            ## Morphe Patch
+            
+            - Stable: [${MORPHE_MAIN}](${MAIN_URL})
+            - Dev: [${MORPHE_DEV}](${DEV_URL})
+            
+            ## MicroG
+            
+            MicroG is required for **YouTube Non-root**.
+            
+            [Download MicroG from MorpheApp/MicroG-RE](${MICROG_URL})
+            EOF
 
           # Tìm các file thực tế có trong thư mục release
           FILES=$(find release -type f \( -name "*.apk" -o -name "*.zip" \))
