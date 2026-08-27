@@ -268,23 +268,17 @@ jobs:
               curl -s -X DELETE "${AUTH[@]}" "$API/git/refs/tags/$tag" >/dev/null || true
             done
 
-      - name: Cleanup old workflow runs
+      - name: Delete excess workflow runs
         env:
-          GH_TOKEN: ${{ secrets.CUSTOM_PAT }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          set -e
-          if [ -z "${{ secrets.CUSTOM_PAT }}" ]; then
-            echo "Chưa cấu hình secret CUSTOM_PAT. Bỏ qua bước xoá workflow runs."
-            exit 0
-          fi
-
-          RUNS_TO_DELETE=$(gh run list \
-            --workflow "patch.yml" \
-            --json databaseId,createdAt \
-            --jq 'sort_by(.createdAt) | reverse | .[3:][].databaseId' 2>/dev/null || true)
-
-          for id in $RUNS_TO_DELETE; do
-            [ -z "$id" ] && continue
-            echo "Deleting workflow run ID: $id"
+          echo "Fetching workflow runs..."
+          # Lấy danh sách tất cả các run ID, sắp xếp mới nhất lên đầu, bỏ qua 5 cái đầu tiên và xóa các cái còn lại
+          run_ids=$(gh run list --limit 100 --json databaseId -q '.[5:][].databaseId')
+          
+          for id in $run_ids; do
+            echo "Deleting run ID: $id"
             gh run delete "$id" || true
           done
+          echo "Cleanup completed!"
