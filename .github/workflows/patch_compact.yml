@@ -23,6 +23,8 @@ jobs:
   stable:
     name: Build Stable
     runs-on: ubuntu-latest
+    outputs:
+      build_stable: ${{ steps.prepare.outputs.build_stable }}
     permissions:
       contents: write
     env:
@@ -39,6 +41,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y p7zip-full zipalign apksigner openssl jq
 
       - name: Prepare
+        id: prepare
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -54,19 +57,18 @@ jobs:
           echo "MORPHE_VERSION=$TAG" >> "$GITHUB_ENV"
 
           BUILD=true
-          # Nếu không phải chạy thủ công hoặc force_build không được bật
           if [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "${{ github.event.inputs.force_build }}" != "true" ]; then
             gh api "/repos/${GITHUB_REPOSITORY}/releases" --paginate > releases.json 2>/dev/null || true
-            # Sửa lại đoạn grep để tìm chính xác theo ${TAG} của Morphe Patch trong lịch sử release
             if jq -r '.[].body // ""' releases.json 2>/dev/null |
               grep -Fq "${TAG}"; then
               BUILD=false
             fi
           fi
+          echo "build_stable=$BUILD" >> "$GITHUB_OUTPUT"
           echo "BUILD_STABLE=$BUILD" >> "$GITHUB_ENV"
 
       - name: Build Stable
-        if: env.BUILD_STABLE == 'true'
+        if: steps.prepare.outputs.build_stable == 'true'
         run: |
           set -e
           node scripts/download_youtube.js "$VERSION"
@@ -92,7 +94,7 @@ jobs:
           git diff --cached --quiet || (git pull --rebase origin main && git commit -m "Update encrypted YouTube keystore (Stable)" && git push)
 
       - uses: actions/upload-artifact@v4
-        if: env.BUILD_STABLE == 'true'
+        if: steps.prepare.outputs.build_stable == 'true'
         with:
           name: youtube-morphe-stable
           path: |
@@ -103,6 +105,8 @@ jobs:
   dev:
     name: Build Dev
     runs-on: ubuntu-latest
+    outputs:
+      build_dev: ${{ steps.prepare.outputs.build_dev }}
     permissions:
       contents: write
     env:
@@ -119,6 +123,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y p7zip-full zipalign apksigner openssl jq
 
       - name: Prepare
+        id: prepare
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -134,19 +139,18 @@ jobs:
           echo "MORPHE_VERSION=$TAG" >> "$GITHUB_ENV"
 
           BUILD=true
-          # Nếu không phải chạy thủ công hoặc force_build không được bật
           if [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "${{ github.event.inputs.force_build }}" != "true" ]; then
             gh api "/repos/${GITHUB_REPOSITORY}/releases" --paginate > releases.json 2>/dev/null || true
-            # Sửa lại đoạn grep để tìm chính xác theo ${TAG} của Morphe Patch trong lịch sử release
             if jq -r '.[].body // ""' releases.json 2>/dev/null |
               grep -Fq "${TAG}"; then
               BUILD=false
             fi
           fi
+          echo "build_dev=$BUILD" >> "$GITHUB_OUTPUT"
           echo "BUILD_DEV=$BUILD" >> "$GITHUB_ENV"
 
       - name: Build Dev
-        if: env.BUILD_DEV == 'true'
+        if: steps.prepare.outputs.build_dev == 'true'
         run: |
           set -e
           node scripts/download_youtube.js "$VERSION"
@@ -172,7 +176,7 @@ jobs:
           git diff --cached --quiet || (git pull --rebase origin main && git commit -m "Update encrypted YouTube keystore (Dev)" && git push)
 
       - uses: actions/upload-artifact@v4
-        if: env.BUILD_DEV == 'true'
+        if: steps.prepare.outputs.build_dev == 'true'
         with:
           name: youtube-morphe-dev
           path: |
@@ -183,7 +187,7 @@ jobs:
   release:
     name: Create Release
     needs: [stable, dev]
-    if: always() && (needs.stable.result == 'success' || needs.dev.result == 'success')
+    if: always() && ((needs.stable.result == 'success' && needs.stable.outputs.build_stable == 'true') || (needs.dev.result == 'success' && needs.dev.outputs.build_dev == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -191,14 +195,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download Stable
-        if: needs.stable.result == 'success'
+        if: needs.stable.result == 'success' && needs.stable.outputs.build_stable == 'true'
         uses: actions/download-artifact@v4
         with:
           name: youtube-morphe-stable
           path: release
 
       - name: Download Dev
-        if: needs.dev.result == 'success'
+        if: needs.dev.result == 'success' && needs.dev.outputs.build_dev == 'true'
         uses: actions/download-artifact@v4
         with:
           name: youtube-morphe-dev
@@ -247,8 +251,8 @@ jobs:
 
   cleanup:
     name: Cleanup
-    needs: release
-    if: needs.release.result == 'success'
+    needs: [stable, dev]
+    if: always() && (needs.stable.result != 'failure' && needs.stable.result != 'cancelled') && (needs.dev.result != 'failure' && needs.dev.result != 'cancelled')
     runs-on: ubuntu-latest
     permissions:
       contents: write
