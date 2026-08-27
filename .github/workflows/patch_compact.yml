@@ -54,10 +54,12 @@ jobs:
           echo "MORPHE_VERSION=$TAG" >> "$GITHUB_ENV"
 
           BUILD=true
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+          # Nếu không phải chạy thủ công hoặc force_build không được bật
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "${{ github.event.inputs.force_build }}" != "true" ]; then
             gh api "/repos/${GITHUB_REPOSITORY}/releases" --paginate > releases.json 2>/dev/null || true
+            # Sửa lại đoạn grep để tìm chính xác theo ${TAG} của Morphe Patch trong lịch sử release
             if jq -r '.[].body // ""' releases.json 2>/dev/null |
-              grep -Fq "Morphe Patch ${TAG} Changelog"; then
+              grep -Fq "${TAG}"; then
               BUILD=false
             fi
           fi
@@ -132,10 +134,12 @@ jobs:
           echo "MORPHE_VERSION=$TAG" >> "$GITHUB_ENV"
 
           BUILD=true
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+          # Nếu không phải chạy thủ công hoặc force_build không được bật
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "${{ github.event.inputs.force_build }}" != "true" ]; then
             gh api "/repos/${GITHUB_REPOSITORY}/releases" --paginate > releases.json 2>/dev/null || true
+            # Sửa lại đoạn grep để tìm chính xác theo ${TAG} của Morphe Patch trong lịch sử release
             if jq -r '.[].body // ""' releases.json 2>/dev/null |
-              grep -Fq "Morphe Patch ${TAG} Changelog"; then
+              grep -Fq "${TAG}"; then
               BUILD=false
             fi
           fi
@@ -274,7 +278,6 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           echo "Fetching workflow runs..."
-          # Lấy danh sách tất cả các run ID, sắp xếp mới nhất lên đầu, bỏ qua 5 cái đầu tiên và xóa các cái còn lại
           run_ids=$(gh run list --limit 100 --json databaseId -q '.[5:][].databaseId')
           
           for id in $run_ids; do
