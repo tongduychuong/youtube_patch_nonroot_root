@@ -1,20 +1,27 @@
-name: "Delete Old Workflow Runs"
+name: "Keep Only Latest 5 Runs Total"
 
 on:
   schedule:
-    - cron: "0 0 * * *" # Chạy vào lúc 0 giờ UTC mỗi ngày
-  workflow_dispatch: # Cho phép chạy thủ công
+    - cron: "0 0 * * *"
+  workflow_dispatch:
 
 jobs:
-  del_runs:
+  cleanup:
     runs-on: ubuntu-latest
     permissions:
       actions: write
     steps:
-      - name: Delete workflow runs
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          retain_days: 0
-          keep_minimum_runs: 5
+      - name: Delete excess workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          echo "Fetching workflow runs..."
+          # Lấy danh sách tất cả các run ID, sắp xếp mới nhất lên đầu, bỏ qua 5 cái đầu tiên và xóa các cái còn lại
+          run_ids=$(gh run list --limit 100 --json databaseId -q '.[5:][].databaseId')
+          
+          for id in $run_ids; do
+            echo "Deleting run ID: $id"
+            gh run delete "$id" || true
+          done
+          echo "Cleanup completed!"
