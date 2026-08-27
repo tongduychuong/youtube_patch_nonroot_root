@@ -251,8 +251,12 @@ jobs:
 
   cleanup:
     name: Cleanup
-    needs: [stable, dev]
-    if: always() && (needs.stable.result != 'failure' && needs.stable.result != 'cancelled') && (needs.dev.result != 'failure' && needs.dev.result != 'cancelled')
+    needs: [release, stable, dev]
+    # Chạy cleanup khi:
+    # 1. Job release chạy thành công (có tạo release mới).
+    # 2. HOẶC job release bị bỏ qua (skipped) vì không có bản build mới, 
+    #    nhưng đồng thời job stable và dev không bị lỗi nghiêm trọng.
+    if: always() && (needs.release.result == 'success' || (needs.release.result == 'skipped' && needs.stable.result != 'failure' && needs.dev.result != 'failure'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
