@@ -1,0 +1,47 @@
+name: Delete All Releases, Drafts, and Tags
+
+on:
+  workflow_dispatch:
+
+jobs:
+  delete-all:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Delete All Releases and Drafts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Fetching all releases including drafts..."
+          # Lấy danh sách ID của tất cả Release (bao gồm cả Draft)
+          RELEASE_IDS=$(gh api repos/${{ github.repository }}/releases --paginate --jq '.[].id')
+          
+          if [ -z "$RELEASE_IDS" ]; then
+            echo "Không tìm thấy Release hoặc Draft nào."
+          else
+            for id in $RELEASE_IDS; do
+              echo "Deleting release ID: $id"
+              gh api -X DELETE repos/${{ github.repository }}/releases/$id
+            done
+          fi
+
+      - name: Delete All Remote Tags
+        run: |
+          echo "Fetching remaining remote tags..."
+          git fetch --tags
+          TAGS=$(git tag)
+          if [ -z "$TAGS" ]; then
+            echo "Không còn Tag nào trên remote."
+          else
+            for tag in $TAGS; do
+              echo "Deleting remote tag: $tag"
+              git push origin --delete "$tag" || true
+            done
+          fi
