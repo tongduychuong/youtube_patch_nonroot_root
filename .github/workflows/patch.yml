@@ -1,4 +1,4 @@
-name: YouTube Morphe Patch chung
+name: YouTube Morphe Patch
 
 on:
   workflow_dispatch:
@@ -46,12 +46,20 @@ jobs:
         run: |
           set -e
 
-          # Đọc version Stable & Dev
+          # Đọc version chuẩn từ file và kiểm tra kỹ
           MAIN_VERSION="$(tr -d '\r\n' < version.txt | xargs)"
           DEV_VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
-          test -n "$MAIN_VERSION"
-          test -n "$DEV_VERSION"
-          echo "VERSION=$MAIN_VERSION" >> "$GITHUB_ENV"
+          
+          if [ -z "$MAIN_VERSION" ]; then
+            echo "Error: version.txt is empty!"
+            exit 1
+          fi
+          if [ -z "$DEV_VERSION" ]; then
+            echo "Error: version_dev.txt is empty!"
+            exit 1
+          fi
+
+          echo "MAIN_VERSION=$MAIN_VERSION" >> "$GITHUB_ENV"
           echo "DEV_VERSION=$DEV_VERSION" >> "$GITHUB_ENV"
 
           # Lấy tag Morphe Stable
@@ -59,7 +67,6 @@ jobs:
             "https://api.github.com/repos/${MORPHE_REPO}/releases/latest" |
             jq -r '.tag_name')"
           test -n "$TAG_STABLE" && test "$TAG_STABLE" != null
-          echo "MORPHE_VERSION=$TAG_STABLE" >> "$GITHUB_ENV"
 
           # Lấy tag Morphe Dev
           TAG_DEV="$(curl -fsSL --retry 5 \
@@ -86,7 +93,7 @@ jobs:
           fi
           echo "build_dev=$BUILD_DEV" >> "$GITHUB_OUTPUT"
 
-          # Tải chung morphe-cli.jar một lần cho cả hai
+          # Tải chung morphe-cli.jar một lần
           URL="$(curl -fsSL --retry 5 \
             "https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest" |
             jq -r '.assets[] | select(.name | endswith("-all.jar")) | .browser_download_url' |
@@ -99,7 +106,7 @@ jobs:
 
           # --- BUILD STABLE ---
           if [ "$BUILD_STABLE" = "true" ]; then
-            echo "Building Stable..."
+            echo "Building Stable with version: $MAIN_VERSION"
             node scripts/download_youtube.js "$MAIN_VERSION"
             INPUT_STABLE="$(find . -type f -name '*.apk' ! -path './.git/*' | head -n 1)"
             test -n "$INPUT_STABLE"
@@ -109,7 +116,7 @@ jobs:
 
           # --- BUILD DEV ---
           if [ "$BUILD_DEV" = "true" ]; then
-            echo "Building Dev..."
+            echo "Building Dev with version: $DEV_VERSION"
             node scripts/download_youtube.js "$DEV_VERSION"
             INPUT_DEV="$(find . -type f -name '*.apk' ! -path './.git/*' | head -n 1)"
             test -n "$INPUT_DEV"
