@@ -107,6 +107,7 @@ jobs:
           # --- BUILD STABLE ---
           if [ "$BUILD_STABLE" = "true" ]; then
             echo "Building Stable with version: $MAIN_VERSION"
+            export VERSION="$MAIN_VERSION"
             node scripts/download_youtube.js "$MAIN_VERSION"
             INPUT_STABLE="$(find . -type f -name '*.apk' ! -path './.git/*' | head -n 1)"
             test -n "$INPUT_STABLE"
@@ -117,6 +118,7 @@ jobs:
           # --- BUILD DEV ---
           if [ "$BUILD_DEV" = "true" ]; then
             echo "Building Dev with version: $DEV_VERSION"
+            export VERSION="$DEV_VERSION"
             node scripts/download_youtube.js "$DEV_VERSION"
             INPUT_DEV="$(find . -type f -name '*.apk' ! -path './.git/*' | head -n 1)"
             test -n "$INPUT_DEV"
