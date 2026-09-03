@@ -273,7 +273,7 @@ jobs:
           AUTH=(-H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${GH_TOKEN}")
 
           curl -fsSL "${AUTH[@]}" "$API/releases?per_page=100" |
-            jq -r 'sort_by(.published_at // .created_at) | reverse | .[3:][] | "\(.id)|\(.tag_name)"' |
+            jq -r 'sort_by(.published_at // .created_at) | reverse | .[10:][] | "\(.id)|\(.tag_name)"' |
             while IFS='|' read -r id tag; do
               [ -z "$id" ] && continue
               curl -fsSL -X DELETE "${AUTH[@]}" "$API/releases/$id"
