@@ -1,0 +1,289 @@
+name: YouTube Morphe Patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Force build Stable + Dev"
+        required: false
+        type: boolean
+        default: true
+  schedule:
+    - cron: "0 22 * * *"
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  MORPHE_REPO: MorpheApp/morphe-patches
+  MICROG_URL: https://github.com/MorpheApp/MicroG-RE/releases
+
+jobs:
+  stable:
+    name: Build Stable
+    runs-on: ubuntu-latest
+    outputs:
+      build_stable: ${{ steps.prepare.outputs.build_stable }}
+    permissions:
+      contents: write
+    env:
+      KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full zipalign apksigner openssl jq
+
+      - name: Prepare
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          VERSION="$(tr -d '\r\n' < version.txt | xargs)"
+          test -n "$VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          TAG="$(curl -fsSL --retry 5 \
+            "https://api.github.com/repos/${MORPHE_REPO}/releases/latest" |
+            jq -r '.tag_name')"
+          test -n "$TAG" && test "$TAG" != null
+          echo "MORPHE_VERSION=$TAG" >> "$GITHUB_ENV"
+
+          BUILD=true
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "${{ github.event.inputs.force_build }}" != "true" ]; then
+            gh api "/repos/${GITHUB_REPOSITORY}/releases" --paginate > releases.json 2>/dev/null || true
+            if jq -r '.[].body // ""' releases.json 2>/dev/null |
+              grep -Fq "${TAG}"; then
+              BUILD=false
+            fi
+          fi
+          echo "build_stable=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "BUILD_STABLE=$BUILD" >> "$GITHUB_ENV"
+
+      - name: Build Stable
+        if: steps.prepare.outputs.build_stable == 'true'
+        run: |
+          set -e
+          node scripts/download_youtube.js "$VERSION"
+          INPUT="$(find . -type f -name '*.apk' ! -path './.git/*' | head -n 1)"
+          test -n "$INPUT"
+
+          URL="$(curl -fsSL --retry 5 \
+            "https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest" |
+            jq -r '.assets[] | select(.name | endswith("-all.jar")) | .browser_download_url' |
+            head -n 1)"
+          test -n "$URL" && test "$URL" != null
+          curl -fsSL --retry 5 -H "User-Agent: GitHubActions" "$URL" -o morphe-cli.jar
+          test -s morphe-cli.jar
+
+          chmod +x scripts/build_nonroot.sh scripts/build_root.sh
+          scripts/build_nonroot.sh "$VERSION" "$INPUT" stable
+          scripts/build_root.sh "$VERSION" "$INPUT" stable
+
+          test -f keys/keystore.enc
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add keys/keystore.enc
+          git diff --cached --quiet || (git pull --rebase origin main && git commit -m "Update encrypted YouTube keystore (Stable)" && git push)
+
+      - uses: actions/upload-artifact@v4
+        if: steps.prepare.outputs.build_stable == 'true'
+        with:
+          name: youtube-morphe-stable
+          path: |
+            youtube-morphe-${{ env.VERSION }}.apk
+            youtube_root_mount_${{ env.VERSION }}_Magisk.zip
+          retention-days: 1
+
+  dev:
+    name: Build Dev
+    runs-on: ubuntu-latest
+    outputs:
+      build_dev: ${{ steps.prepare.outputs.build_dev }}
+    permissions:
+      contents: write
+    env:
+      KEYSTORE_ENCRYPTION_KEY: ${{ secrets.KEYSTORE_ENCRYPTION_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full zipalign apksigner openssl jq
+
+      - name: Prepare
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
+          test -n "$VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          TAG="$(curl -fsSL --retry 5 \
+            "https://api.github.com/repos/${MORPHE_REPO}/releases?per_page=100" |
+            jq -r '[.[] | select(.prerelease == true) | .tag_name][0]')"
+          test -n "$TAG" && test "$TAG" != null
+          echo "MORPHE_VERSION=$TAG" >> "$GITHUB_ENV"
+
+          BUILD=true
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] || [ "${{ github.event.inputs.force_build }}" != "true" ]; then
+            gh api "/repos/${GITHUB_REPOSITORY}/releases" --paginate > releases.json 2>/dev/null || true
+            if jq -r '.[].body // ""' releases.json 2>/dev/null |
+              grep -Fq "${TAG}"; then
+              BUILD=false
+            fi
+          fi
+          echo "build_dev=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "BUILD_DEV=$BUILD" >> "$GITHUB_ENV"
+
+      - name: Build Dev
+        if: steps.prepare.outputs.build_dev == 'true'
+        run: |
+          set -e
+          node scripts/download_youtube.js "$VERSION"
+          INPUT="$(find . -type f -name '*.apk' ! -path './.git/*' | head -n 1)"
+          test -n "$INPUT"
+
+          URL="$(curl -fsSL --retry 5 \
+            "https://api.github.com/repos/MorpheApp/morphe-desktop/releases/latest" |
+            jq -r '.assets[] | select(.name | endswith("-all.jar")) | .browser_download_url' |
+            head -n 1)"
+          test -n "$URL" && test "$URL" != null
+          curl -fsSL --retry 5 -H "User-Agent: GitHubActions" "$URL" -o morphe-cli.jar
+          test -s morphe-cli.jar
+
+          chmod +x scripts/build_nonroot.sh scripts/build_root.sh
+          scripts/build_nonroot.sh "$VERSION" "$INPUT" dev
+          scripts/build_root.sh "$VERSION" "$INPUT" dev
+
+          test -f keys/keystore.enc
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add keys/keystore.enc
+          git diff --cached --quiet || (git pull --rebase origin main && git commit -m "Update encrypted YouTube keystore (Dev)" && git push)
+
+      - uses: actions/upload-artifact@v4
+        if: steps.prepare.outputs.build_dev == 'true'
+        with:
+          name: youtube-morphe-dev
+          path: |
+            youtube-morphe-dev-${{ env.VERSION }}.apk
+            youtube_dev_root_mount_${{ env.VERSION }}_Magisk.zip
+          retention-days: 1
+
+  release:
+    name: Create or Update Release
+    needs: [stable, dev]
+    if: always() && ((needs.stable.result == 'success' && needs.stable.outputs.build_stable == 'true') || (needs.dev.result == 'success' && needs.dev.outputs.build_dev == 'true'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Stable
+        if: needs.stable.result == 'success' && needs.stable.outputs.build_stable == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: youtube-morphe-stable
+          path: release
+
+      - name: Download Dev
+        if: needs.dev.result == 'success' && needs.dev.outputs.build_dev == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: youtube-morphe-dev
+          path: release
+
+      - name: Create or Update Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          MAIN_VERSION="$(tr -d '\r\n' < version.txt | xargs)"
+          DEV_VERSION="$(tr -d '\r\n' < version_dev.txt | xargs)"
+
+          MORPHE_MAIN="$(curl -fsSL \
+            "https://api.github.com/repos/${MORPHE_REPO}/releases/latest" |
+            jq -r '.tag_name')"
+
+          MORPHE_DEV="$(curl -fsSL \
+            "https://api.github.com/repos/${MORPHE_REPO}/releases?per_page=100" |
+            jq -r '[.[] | select(.prerelease == true) | .tag_name][0]')"
+
+          MAIN_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_MAIN}"
+          DEV_URL="https://github.com/${MORPHE_REPO}/releases/tag/${MORPHE_DEV}"
+
+          RUN_TAG="latest"
+          RUN_TIME="$(date -u '+%Y-%m-%d %H:%M UTC')"
+          NAME="YouTube Morphe Stable ${MAIN_VERSION} / Dev ${DEV_VERSION} (${RUN_TIME})"
+
+          printf "## YouTube Versions\n\n" > release_notes.txt
+          printf -- "- Stable: %s\n" "$MAIN_VERSION" >> release_notes.txt
+          printf -- "- Dev: %s\n\n" "$DEV_VERSION" >> release_notes.txt
+          printf "## Morphe Patch\n\n" >> release_notes.txt
+          printf -- "- Stable: [%s](%s)\n" "$MORPHE_MAIN" "$MAIN_URL" >> release_notes.txt
+          printf -- "- Dev: [%s](%s)\n\n" "$MORPHE_DEV" "$DEV_URL" >> release_notes.txt
+          printf "## MicroG\n\n" >> release_notes.txt
+          printf "MicroG is required for **YouTube Non-root**.\n\n" >> release_notes.txt
+          printf "[Download MicroG from MorpheApp/MicroG-RE](%s)\n" "$MICROG_URL" >> release_notes.txt
+
+          FILES=$(find release -type f \( -name "*.apk" -o -name "*.zip" \))
+
+          if gh release view "$RUN_TAG" &>/dev/null; then
+            echo "Release đã tồn tại. Đang tiến hành cập nhật..."
+            
+            for file in $FILES; do
+              filename=$(basename "$file")
+              gh release delete-asset "$RUN_TAG" "$filename" --yes || true
+            done
+
+            gh release edit "$RUN_TAG" \
+              --title "$NAME" \
+              --notes-file release_notes.txt
+
+            gh release upload "$RUN_TAG" $FILES --clobber
+          else
+            echo "Release chưa tồn tại. Đang tạo mới..."
+            gh release create "$RUN_TAG" \
+              --title "$NAME" \
+              --notes-file release_notes.txt \
+              --target "${GITHUB_REF_NAME}" \
+              $FILES
+          fi
+
+  cleanup:
+    name: Cleanup
+    needs: [release, stable, dev]
+    if: always() && (needs.release.result == 'success' || (needs.release.result == 'skipped' && needs.stable.result != 'failure' && needs.dev.result != 'failure'))
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Delete excess workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          echo "Fetching workflow runs..."
+          run_ids=$(gh run list --limit 100 --json databaseId -q '.[5:][].databaseId')
+          
+          for id in $run_ids; do
+            echo "Deleting run ID: $id"
+            gh run delete "$id" || true
+          done
+          echo "Cleanup completed!"
